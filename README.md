@@ -97,6 +97,70 @@ sounds/
 └── ...
 ```
 
+## ESP32 Hardware Button Pad
+
+Use physical buttons at your radio. Three modes, pick what suits:
+
+### Mode 1: USB HID Keyboard (simplest)
+
+ESP32 emulates a keyboard. Plug it in, press buttons, sounds fire.
+**No extra NutTx flags needed** — it just works.
+
+```
+ESP32 GPIO 2,4,5,18,19,21,22,23,25,26  →  buttons 1-0
+Each button: GPIO to GND (internal pull-up)
+```
+
+Flash: `esp32/hid/nuttx_hid.ino` in Arduino IDE (board: ESP32 Dev Module).
+
+### Mode 2: USB Serial (CDC)
+
+ESP32 appears as `/dev/ttyACM0`. Sends one char per press.
+
+```bash
+python main.py --serial /dev/ttyACM0
+```
+
+Flash: `esp32/serial/nuttx_serial.ino`. Works best on ESP32-S3 (native USB).
+Classic ESP32 needs a UART-to-USB bridge or USB-Serial-JTAG.
+
+### Mode 3: WiFi UDP (wireless)
+
+No cable. ESP32 connects to your WiFi and sends 1-byte UDP packets.
+
+```bash
+python main.py --udp 5566    # listens on all interfaces
+```
+
+Flash: `esp32/wifi/nuttx_wifi.ino`. Edit the WiFi credentials and
+target PC IP at the top of the sketch before flashing.
+
+### BOM (for all modes)
+
+| Qty | Part |
+|-----|------|
+| 1   | ESP32 (classic, S2, or S3) |
+| 10-11 | Tactile buttons (6x6mm) |
+| 1   | Breadboard or perfboard |
+| 11  | Jumper wires |
+| 1   | 10K resistor pack (optional, for external pull-down) |
+| 1   | USB-A to micro-C cable (or USB-C for S3) |
+| 1   | 18650 battery + holder (optional, for wireless/field use) |
+
+### Wiring Diagram (all modes)
+
+```
+    VCC ───┬──┬──┬──┬──┬──┬──┬──┬──┬──┬──┐
+           │  │  │  │  │  │  │  │  │  │  │
+          [B1][B2][B3][B4][B5][B6][B7][B8][B9][B10]
+           │  │  │  │  │  │  │  │  │  │  │
+          GND GND GND GND GND GND GND GND GND GND
+
+    GPIO: 2  4  5  18 19 21 22 23 25 26  (32 = mute)
+    Each button: one leg to GPIO, other leg to GND
+    Internal pull-up handles the "high when not pressed" state
+```
+
 ## Why "NutTx"?
 
 Squirrels hoard nuts. Ham operators transmit. NutTx hoards sounds and

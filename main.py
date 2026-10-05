@@ -22,6 +22,8 @@ def main():
     parser.add_argument("--no-preload", action="store_true", help="Don't preload sounds into RAM")
     parser.add_argument("-v", "--volume", type=float, help="Override global volume (0.0-1.0)")
     parser.add_argument("--test", metavar="FILE", help="Play a specific sound file and exit")
+    parser.add_argument("--serial", metavar="PORT", help="Listen on serial port (e.g. /dev/ttyACM0) for ESP32")
+    parser.add_argument("--udp", metavar="PORT", type=int, help="Listen on UDP port for ESP32 WiFi (default 5566)")
 
     args = parser.parse_args()
 
@@ -56,8 +58,36 @@ def main():
         sys.exit(0)
 
     keys = cfg.get("keys", {})
+
+    # Define the action that fires when a key is received (from any source)
+    def trigger_key(ch: str):
+        if ch == "m":
+            cfg_vol = cfg["global"].get("volume", 0.8)
+            engine.global_volume = 0.0 if engine.global_volume > 0 else cfg_vol
+        elif ch in keys:
+            engine.play(keys[ch])
+
+    # Start external input listeners
+    serial_input = None
+    udp_input = None
+
+    if args.serial:
+        from soundboard.serial_input import SerialInput
+        serial_input = SerialInput(args.serial, trigger_key)
+        serial_input.start()
+
+    if args.udp is not None:
+        from soundboard.udp_input import UDPInput
+        udp_input = UDPInput(args.udp, trigger_key)
+        udp_input.start()
+
     tui = TUI(engine, keys, cfg)
     tui.run()
+
+    if serial_input:
+        serial_input.stop()
+    if udp_input:
+        udp_input.stop()
 
 
 if __name__ == "__main__":
