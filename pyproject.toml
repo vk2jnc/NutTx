@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nuttx"
+version = "0.1.0"
+description = "Portable soundboard for ham radio & streaming"
+requires-python = ">=3.11"
+dependencies = [
+    "sounddevice>=0.4.6",
+    "numpy",
+    "soundfile",
+]
+
+[project.scripts]
+nuttx = "main:main"
+
+[tool.setuptools.packages.find]
+include = ["soundboard*"]

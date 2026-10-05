@@ -1,0 +1,4 @@
+sounddevice>=0.4.6
+numpy
+soundfile
+tomli; python_version < "3.11"

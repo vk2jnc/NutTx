@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+sounds/*.wav
+sounds/*.mp3
+sounds/*.ogg
+sounds/*.flac
+sounds/*.m4a
+!sounds/README.md
