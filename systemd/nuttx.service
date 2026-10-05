@@ -1,0 +1,32 @@
+# NutTx - systemd service unit
+#
+# Install:
+#   sudo cp systemd/nuttx.service /etc/systemd/system/nuttx.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable nuttx
+#   sudo systemctl start nuttx
+#
+# Or for a single user (no sudo):
+#   cp systemd/nuttx.service ~/.config/systemd/user/nuttx.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now nuttx
+
+[Unit]
+Description=NutTx Soundboard
+After=network.target sound.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/git/NutTx
+ExecStart=/home/%i/.local/bin/python3 main.py --daemon -c config.toml --udp 5566
+Restart=on-failure
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+
+# Safety: kill after 5s if it wedges
+TimeoutStartSec=5
+WatchdogSec=30
+
+[Install]
+WantedBy=default.target

@@ -4,27 +4,47 @@ Portable soundboard for ham radio & streaming. Squeaks out signals.
 
 A terminal-based soundboard that pipes audio to **any** output device —
 ham radio line-in, virtual sink for OBS, HDMI, speakers — with hotkey
-triggers for fast, low-latency playback.
+triggers, ESP32 button pads, MIDI controllers, web UI, tone generation,
+and more.
 
 ## Quick Start
 
 ```bash
-# Install dependencies
 pip install -r requirements.txt
-# Or: pipx install . (once we add pyproject.toml)
 
-# List available audio output devices
+# List audio devices
 python main.py --list-devices
 
 # Run with a specific device
 python main.py -d "NVidia HDMI 0"
 
-# Run with default settings (reads config.toml)
+# Run with defaults
 python main.py
 
 # Test a single file
 python main.py --test sounds/cQ.wav
 ```
+
+## Features
+
+- **Any output device** — ham radio, HDMI, virtual sink, speakers
+- **Hotkey triggers** — 1-0 on keyboard, zero latency (preloaded)
+- **ESP32 button pad** — USB HID / serial / WiFi wireless
+- **MIDI input** — USB keyboard/controller triggers
+- **Web UI + HTTP API** — trigger from phone, tablet, browser
+- **Tone generator** — CW, Morse, beeps, DTMF, SID tones, ARPTone
+- **Sequencer** — play sound chains in order
+- **Loop mode** — loop any sound indefinitely
+- **Fade in/out** — clean audio transitions
+- **Recording** — capture mic input as a new sound
+- **Sound banks** — switch between radio/streaming/generic presets
+- **Panic button** — instant hard-stop of all audio
+- **Ducking** — reduce volume for priority sounds
+- **Auto-mute** — silence after idle timeout
+- **Daemon mode** — headless, runs in background
+- **Logging** — timestamped playback history
+- **3D-printable button pad** — design spec included
+- **Systemd service** — auto-start on boot
 
 ## Configuration
 
@@ -32,48 +52,38 @@ Edit `config.toml`:
 
 ```toml
 [device]
-name = "NVidia HDMI 0"    # or device index as string: "3"
+name = "NVidia HDMI 0"
 
 [engine]
-preload = true            # preload into RAM for zero-latency
-sample_rate = 0           # 0 = auto (use device native)
-channels = 1              # 1 = mono (radio), 2 = stereo (streaming)
+preload = true
+sample_rate = 0
+channels = 1
 
 [global]
-volume = 0.8              # 0.0 - 1.0
+volume = 0.8
+auto_mute_secs = 0
 
 [keys]
 "1" = "cQ.wav"
 "2" = "73.wav"
-"3" = "thank_you.wav"
 ...
 
-[overrides]
-"alert.wav" = 1.0         # per-sound volume override
+[web]
+enabled = true
+port = 8347
+
+[safety]
+duck_level = 0.1
+duck_release_ms = 200
+
+[midi]
+enabled = false
+device = "default"
+
+[sequences]
+"check_in" = ["cQ.wav", "id.wav"]
+"de_key" = ["break.wav", "break.wav"]
 ```
-
-## Using with Ham Radio
-
-1. Connect your sound card / USB sound device to the radio's phone/line-in
-2. Identify the device: `python main.py --list-devices`
-3. Set it in config: `name = "Your Radio USB Sound Card"`
-4. Use `channels = 1` for mono
-5. Run NutTx and hit your hotkeys
-
-## Using for Streaming (OBS / etc.)
-
-Create a PipeWire virtual sink:
-```bash
-pactl load-module module-null-sink sink_name=NutTx
-```
-
-Then point NutTx at it:
-```toml
-[device]
-name = "NutTx"
-```
-
-In OBS, add "Audio Input Capture" and select the `NutTx.monitor` source.
 
 ## TUI Controls
 
@@ -84,81 +94,208 @@ In OBS, add "Audio Input Capture" and select the `NutTx.monitor` source.
 | l   | Reload sounds from disk |
 | q   | Quit |
 
-## Sounds Directory
-
-Drop audio files in `sounds/`. They're referenced by filename stem in config.
-
-```
-sounds/
-├── cQ.wav
-├── 73.wav
-├── thank_you.wav
-├── roger.wav
-└── ...
-```
-
 ## ESP32 Hardware Button Pad
 
-Use physical buttons at your radio. Three modes, pick what suits:
+Physical buttons at your radio. Three modes:
 
-### Mode 1: USB HID Keyboard (simplest)
-
-ESP32 emulates a keyboard. Plug it in, press buttons, sounds fire.
-**No extra NutTx flags needed** — it just works.
+### USB HID (simplest)
+ESP32 emulates a keyboard. Plug in, press buttons, done. No flags needed.
 
 ```
-ESP32 GPIO 2,4,5,18,19,21,22,23,25,26  →  buttons 1-0
-Each button: GPIO to GND (internal pull-up)
+python main.py    # just works
 ```
 
-Flash: `esp32/hid/nuttx_hid.ino` in Arduino IDE (board: ESP32 Dev Module).
-
-### Mode 2: USB Serial (CDC)
-
-ESP32 appears as `/dev/ttyACM0`. Sends one char per press.
-
-```bash
+### USB Serial
+```
 python main.py --serial /dev/ttyACM0
 ```
 
-Flash: `esp32/serial/nuttx_serial.ino`. Works best on ESP32-S3 (native USB).
-Classic ESP32 needs a UART-to-USB bridge or USB-Serial-JTAG.
+### WiFi UDP (wireless)
+```
+python main.py --udp 5566
+```
 
-### Mode 3: WiFi UDP (wireless)
+See `esp32/` directory for firmware. See `hw/button_pad.md` for 3D-print design.
 
-No cable. ESP32 connects to your WiFi and sends 1-byte UDP packets.
+## MIDI Controllers
+
+Enable in config:
+```toml
+[midi]
+enabled = true
+device = "default"
+```
+
+Default mapping: C4-C#5 (notes 60-69) = keys 1-0, C5 = mute.
+Install: `pip install python-rtmidi`
+
+## Web UI & HTTP API
+
+Start with `--daemon` or in interactive mode (auto-starts if `[web] enabled = true`).
+
+**Web UI:** http://localhost:8347 — grid of buttons, volume slider, mute/panic.
+
+**HTTP API:**
+```bash
+# Trigger sound
+curl -X POST http://localhost:8347/api/trigger -d '{"key":"1"}'
+
+# Set volume
+curl -X POST http://localhost:8347/api/volume -d '{"volume":0.5}'
+
+# Mute
+curl -X POST http://localhost:8347/api/mute
+
+# Panic (stop all)
+curl -X POST http://localhost:8347/api/panic
+
+# Status
+curl http://localhost:8347/api/status
+```
+
+## Tone Generator
 
 ```bash
-python main.py --udp 5566    # listens on all interfaces
+# Simple beep
+python main.py --tone beep --tone-freq 1000 --tone-dur 0.2
+
+# CW carrier (Ctrl+C to stop)
+python main.py --tone cw --tone-freq 700
+
+# Morse code
+python main.py --tone morse --tone-text "CQ CQ CQ DE VK2JNC" --tone-wpm 15
+
+# SID check tone
+python main.py --tone sid --tone-freq 67
+
+# DTMF digits
+python main.py --tone dtmf --tone-digits "12345"
+
+# ARPTone
+python main.py --tone arptone --tone-dur 2.0
+
+# Frequency sweep
+python main.py --tone sweep --tone-freq 400 --tone-dur 1.0
 ```
 
-Flash: `esp32/wifi/nuttx_wifi.ino`. Edit the WiFi credentials and
-target PC IP at the top of the sketch before flashing.
+## Sequences & Looping
 
-### BOM (for all modes)
+```bash
+# Play a named sequence (defined in config)
+python main.py --seq check_in
 
-| Qty | Part |
-|-----|------|
-| 1   | ESP32 (classic, S2, or S3) |
-| 10-11 | Tactile buttons (6x6mm) |
-| 1   | Breadboard or perfboard |
-| 11  | Jumper wires |
-| 1   | 10K resistor pack (optional, for external pull-down) |
-| 1   | USB-A to micro-C cable (or USB-C for S3) |
-| 1   | 18650 battery + holder (optional, for wireless/field use) |
+# Loop a sound (Ctrl+C to stop)
+python main.py --loop alert.wav
+```
 
-### Wiring Diagram (all modes)
+## Recording
+
+```bash
+# Record 3 seconds to sounds/my_catchphrase.wav
+python main.py --record my_catchphrase --record-dur 3
+
+# Record until Ctrl+C
+python main.py --record my_catchphrase
+
+# Specify input device
+python main.py --record my_catchphrase --input-device "USB Mic"
+```
+
+## Sound Banks
+
+Switch between preset configurations (radio, streaming, etc.):
+
+```bash
+# List banks
+python main.py --list-banks
+
+# Load a bank
+python main.py --bank ham_radio
+
+# Save current config as a bank
+python main.py --save-bank my_setup
+```
+
+Banks live in `banks/*.json`.
+
+## Daemon Mode
+
+Run headless (no TUI), ideal for background/automated operation:
+
+```bash
+python main.py --daemon --udp 5566
+```
+
+Starts web UI, UDP listener, and (optionally) MIDI. Logs to stdout.
+
+## Systemd Service
+
+```bash
+sudo cp systemd/nuttx.service /etc/systemd/system/
+# Edit the User= and paths in the service file
+sudo systemctl daemon-reload
+sudo systemctl enable --now nuttx
+```
+
+## Using with Ham Radio
+
+1. Connect sound card / USB audio to radio's phone/line-in
+2. `python main.py --list-devices` to find it
+3. Set in config: `name = "Your Radio USB Sound Card"`
+4. `channels = 1` for mono
+5. Run and go
+
+## Using for Streaming (OBS)
+
+```bash
+pactl load-module module-null-sink sink_name=NutTx
+```
+
+```toml
+[device]
+name = "NutTx"
+```
+
+In OBS: Audio Input Capture → select `NutTx.monitor`.
+
+## Sounds Directory
+
+Drop audio files in `sounds/`. Referenced by filename stem in config.
+
+## Project Structure
 
 ```
-    VCC ───┬──┬──┬──┬──┬──┬──┬──┬──┬──┬──┐
-           │  │  │  │  │  │  │  │  │  │  │
-          [B1][B2][B3][B4][B5][B6][B7][B8][B9][B10]
-           │  │  │  │  │  │  │  │  │  │  │
-          GND GND GND GND GND GND GND GND GND GND
-
-    GPIO: 2  4  5  18 19 21 22 23 25 26  (32 = mute)
-    Each button: one leg to GPIO, other leg to GND
-    Internal pull-up handles the "high when not pressed" state
+NutTx/
+├── main.py               # Entry point
+├── config.toml           # Configuration
+├── pyproject.toml        # Package definition
+├── requirements.txt
+├── soundboard/
+│   ├── engine.py         # Audio playback engine
+│   ├── device.py         # Device discovery
+│   ├── config.py         # Config loader
+│   ├── ui.py             # Curses TUI
+│   ├── daemon.py         # Headless daemon mode
+│   ├── web.py            # Web UI + HTTP API
+│   ├── tones.py          # Tone/CW/Morse/DTMF generator
+│   ├── sequencer.py      # Sequences, loops, recording
+│   ├── midi.py           # MIDI input
+│   ├── banks.py          # Sound bank presets
+│   ├── safety.py         # Panic, ducking, auto-mute
+│   ├── playlog.py        # Playback logging
+│   ├── serial_input.py   # ESP32 serial listener
+│   └── udp_input.py      # ESP32 WiFi UDP listener
+├── esp32/
+│   ├── hid/              # USB HID firmware
+│   ├── serial/           # USB CDC firmware
+│   └── wifi/             # WiFi UDP firmware
+├── hw/
+│   ├── button_pad.md     # 3D print design spec
+│   └── gen_pad.py        # STL generator script
+├── systemd/
+│   └── nuttx.service     # Systemd unit
+├── banks/                # Sound bank presets
+└── sounds/               # Your audio files
 ```
 
 ## Why "NutTx"?

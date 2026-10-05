@@ -8,6 +8,11 @@ from soundboard.engine import Engine
 from soundboard.device import list_devices, resolve_device
 from soundboard.config import load_config
 from soundboard.ui import TUI
+from soundboard.tones import ToneGen
+from soundboard.sequencer import Sequencer, Recorder
+from soundboard.banks import BankManager
+from soundboard.safety import Safety
+from soundboard.playlog import PlayLog
 
 
 def main():
@@ -22,8 +27,40 @@ def main():
     parser.add_argument("--no-preload", action="store_true", help="Don't preload sounds into RAM")
     parser.add_argument("-v", "--volume", type=float, help="Override global volume (0.0-1.0)")
     parser.add_argument("--test", metavar="FILE", help="Play a specific sound file and exit")
-    parser.add_argument("--serial", metavar="PORT", help="Listen on serial port (e.g. /dev/ttyACM0) for ESP32")
-    parser.add_argument("--udp", metavar="PORT", type=int, help="Listen on UDP port for ESP32 WiFi (default 5566)")
+    parser.add_argument("--serial", metavar="PORT", help="Listen on serial port (e.g. /dev/ttyACM0)")
+    parser.add_argument("--udp", metavar="PORT", type=int, help="Listen on UDP port for ESP32 WiFi")
+
+    # Tone generator commands
+    parser.add_argument("--tone", metavar="TYPE",
+                        help="Generate a tone: beep|sweep|cw|morse|sid|dtmf|arptone")
+    parser.add_argument("--tone-freq", type=float, default=700.0, help="Tone frequency")
+    parser.add_argument("--tone-dur", type=float, default=1.0, help="Tone duration (seconds)")
+    parser.add_argument("--tone-text", help="Text for Morse code")
+    parser.add_argument("--tone-digits", help="Digits for DTMF sequence")
+    parser.add_argument("--tone-wpm", type=float, default=15.0, help="Morse WPM")
+
+    # Sequencer
+    parser.add_argument("--seq", metavar="NAME", help="Play a named sequence from config")
+    parser.add_argument("--loop", metavar="SOUND", help="Loop a sound (Ctrl+C to stop)")
+
+    # Recording
+    parser.add_argument("--record", metavar="NAME", help="Record a sound (Ctrl+C to stop)")
+    parser.add_argument("--record-dur", type=float, help="Record duration in seconds")
+    parser.add_argument("--input-device", help="Input device for recording (name or index)")
+
+    # Banks
+    parser.add_argument("--bank", metavar="NAME", help="Load a sound bank")
+    parser.add_argument("--banks-dir", default="banks/", help="Banks directory")
+    parser.add_argument("--list-banks", action="store_true", help="List available banks")
+    parser.add_argument("--save-bank", metavar="NAME", help="Save current config as a bank")
+
+    # Daemon mode
+    parser.add_argument("--daemon", action="store_true", help="Run as headless daemon (no TUI)")
+    parser.add_argument("--web-port", type=int, help="Override web UI port")
+    parser.add_argument("--no-web", action="store_true", help="Disable web UI")
+
+    # Logging
+    parser.add_argument("--log-file", help="Playback log file (JSON lines)")
 
     args = parser.parse_args()
 
@@ -33,6 +70,37 @@ def main():
 
     cfg = load_config(args.config)
 
+    # --- Banks ---
+    bank_mgr = BankManager(args.banks_dir)
+    if args.list_banks:
+        print("Available banks:")
+        for name in bank_mgr.list_banks():
+            b = bank_mgr.get(name)
+            print(f"  {name}: {len(b.keys)} keys, vol={b.volume}, ch={b.channels}")
+        sys.exit(0)
+
+    if args.bank:
+        bank = bank_mgr.load(args.bank)
+        if bank:
+            cfg["keys"] = bank.keys
+            cfg["global"]["volume"] = bank.volume
+            cfg["engine"]["channels"] = bank.channels
+            if bank.device:
+                cfg["device"]["name"] = bank.device
+
+    if args.save_bank:
+        from soundboard.banks import SoundBank
+        bank = SoundBank(
+            name=args.save_bank,
+            keys=cfg.get("keys", {}),
+            volume=cfg["global"].get("volume", 0.8),
+            channels=cfg["engine"].get("channels", 1),
+            device=cfg["device"].get("name", ""),
+        )
+        bank_mgr.save(bank)
+        sys.exit(0)
+
+    # --- Apply overrides ---
     if args.device:
         cfg["device"]["name"] = args.device
     if args.no_preload:
@@ -52,42 +120,129 @@ def main():
         overrides=cfg.get("overrides", {}),
     )
 
+    keys = cfg.get("keys", {})
+
+    # --- Subcommands that don't need the TUI ---
+
     if args.test:
         engine.play_file(args.test)
         print(f"Played: {args.test}")
         sys.exit(0)
 
-    keys = cfg.get("keys", {})
+    # Tone generation
+    if args.tone:
+        tg = ToneGen(engine)
+        if args.tone == "beep":
+            tg.beep(args.tone_freq, args.tone_dur)
+        elif args.tone == "sweep":
+            tg.sweep(args.tone_freq, args.tone_freq * 2, args.tone_dur)
+        elif args.tone == "cw":
+            tg.cw(args.tone_freq)
+            import time
+            print("CW running (Ctrl+C to stop)")
+            try:
+                while True:
+                    time.sleep(0.5)
+            except KeyboardInterrupt:
+                tg.stop_cw()
+        elif args.tone == "morse":
+            if not args.tone_text:
+                parser.error("--tone-text required for morse")
+            tg.morse(args.tone_text, args.tone_freq, args.tone_wpm)
+        elif args.tone == "sid":
+            tg.sid_tone(args.tone_freq, args.tone_dur)
+        elif args.tone == "dtmf":
+            if not args.tone_digits:
+                parser.error("--tone-digits required for dtmf")
+            tg.dtmf_sequence(args.tone_digits)
+        elif args.tone == "arptone":
+            tg.arptone(args.tone_dur)
+        else:
+            parser.error(f"Unknown tone type: {args.tone}")
+        sys.exit(0)
 
-    # Define the action that fires when a key is received (from any source)
-    def trigger_key(ch: str):
-        if ch == "m":
-            cfg_vol = cfg["global"].get("volume", 0.8)
-            engine.global_volume = 0.0 if engine.global_volume > 0 else cfg_vol
-        elif ch in keys:
-            engine.play(keys[ch])
+    # Sequencer
+    if args.seq:
+        seqs = cfg.get("sequences", {})
+        if args.seq not in seqs:
+            print(f"Unknown sequence: {args.seq}")
+            print(f"Available: {list(seqs.keys())}")
+            sys.exit(1)
+        seq = Sequencer(engine)
+        seq.sequence(seqs[args.seq], blocking=True)
+        sys.exit(0)
 
-    # Start external input listeners
-    serial_input = None
-    udp_input = None
+    # Loop
+    if args.loop:
+        seq = Sequencer(engine)
+        print(f"Looping '{args.loop}' (Ctrl+C to stop)")
+        try:
+            seq.loop(args.loop)
+            import time
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            seq.stop()
+        sys.exit(0)
 
-    if args.serial:
-        from soundboard.serial_input import SerialInput
-        serial_input = SerialInput(args.serial, trigger_key)
-        serial_input.start()
+    # Recording
+    if args.record:
+        from soundboard.device import resolve_device as rd
+        in_dev = rd(args.input_device) if args.input_device else None
+        rec = Recorder(engine, input_device=in_dev)
+        rec.record(args.record, duration=args.record_dur)
+        sys.exit(0)
 
-    if args.udp is not None:
-        from soundboard.udp_input import UDPInput
-        udp_input = UDPInput(args.udp, trigger_key)
-        udp_input.start()
+    # --- Main modes ---
 
-    tui = TUI(engine, keys, cfg)
-    tui.run()
+    if args.daemon:
+        from soundboard.daemon import run_daemon
+        run_daemon(engine, keys, cfg,
+                   serial_port=args.serial,
+                   udp_port=args.udp if args.udp is not None else
+                   (cfg.get("web", {}).get("udp_port") if not args.no_web else None))
+    else:
+        # Interactive TUI mode (optionally with external inputs)
+        def trigger_key(ch: str):
+            if ch == "m":
+                vol = cfg["global"].get("volume", 0.8)
+                engine.global_volume = 0.0 if engine.global_volume > 0 else vol
+            elif ch in keys:
+                engine.play(keys[ch])
 
-    if serial_input:
-        serial_input.stop()
-    if udp_input:
-        udp_input.stop()
+        serial_input = None
+        udp_input = None
+
+        if args.serial:
+            from soundboard.serial_input import SerialInput
+            serial_input = SerialInput(args.serial, trigger_key)
+            serial_input.start()
+
+        if args.udp is not None:
+            from soundboard.udp_input import UDPInput
+            udp_input = UDPInput(args.udp, trigger_key)
+            udp_input.start()
+
+        # Web UI in interactive mode too
+        if not args.no_web and cfg.get("web", {}).get("enabled", True):
+            from soundboard.web import WebServer
+            web = WebServer(engine, keys, cfg,
+                           host=cfg.get("web", {}).get("host", "0.0.0.0"),
+                           port=args.web_port or cfg.get("web", {}).get("port", 8347))
+            web.start()
+            print(f"Web UI: http://localhost:{web.port}")
+        else:
+            web = None
+
+        tui = TUI(engine, keys, cfg)
+        tui.run()
+
+        if serial_input:
+            serial_input.stop()
+        if udp_input:
+            udp_input.stop()
+        if web:
+            web.stop()
 
 
 if __name__ == "__main__":
