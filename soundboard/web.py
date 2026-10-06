@@ -62,6 +62,8 @@ class NutTxHandler(BaseHTTPRequestHandler):
                 "sounds": self.engine.loaded_sounds,
                 "keys": self.keys,
             })
+        elif path == "/api/keys":
+            self._json(200, {"keys": self.keys, "available_sounds": self.engine.loaded_sounds})
         elif path == "/api/log":
             self._json(200, {"log": self.play_log[-100:]})
         elif path == "/api/devices":
@@ -141,6 +143,20 @@ class NutTxHandler(BaseHTTPRequestHandler):
                 dev_name = sd.query_devices(self.engine.device)["name"]
             self._json(200, {"device": self.engine.device, "name": dev_name})
 
+        elif path == "/api/keys":
+            data = json.loads(body) if body else {}
+            key = data.get("key", "")
+            sound = data.get("sound", "")
+            if not key:
+                self._json(400, {"error": "missing 'key'"})
+            elif sound == "":
+                # Unassign
+                self.keys.pop(key, None)
+                self._json(200, {"keys": self.keys, "removed": key})
+            else:
+                self.keys[key] = sound
+                self._json(200, {"keys": self.keys, "assigned": f"{key}={sound}"})
+
         else:
             self._json(404, {"error": "not found"})
 
@@ -199,7 +215,7 @@ class NutTxHandler(BaseHTTPRequestHandler):
         items = ""
         for key in sorted(key_map.keys()):
             snd = key_map[key]
-            items += f'<button class="pad" data-key="{key}" onclick="trigger(\'{key}\')"><span class="key-label">{key}</span><span class="sound-name">{snd.replace(".wav","").replace(".mp3","").replace(".ogg","")}</span><span class="pulse-ring"></span></button>\n'
+            items += f'<button class="pad" data-key="{key}" onclick="trigger(\'{key}\')"><span class="key-label">{key}</span><span class="sound-name" onclick="event.stopPropagation();openPicker(\'{key}\')">{snd.replace(".wav","").replace(".mp3","").replace(".ogg","")}</span><span class="pulse-ring"></span></button>\n'
 
         return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -457,6 +473,83 @@ h1 {{
     min-height: 1.2em;
 }}
 .upload-status.error {{ color: var(--red); }}
+.sound-name {{ cursor: pointer; }}
+.sound-name:hover {{ color: var(--accent); text-decoration: underline; }}
+
+/* Sound picker modal */
+.picker-overlay {{
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+}}
+.picker-overlay.open {{ display: flex; }}
+.picker {{
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 1.5rem;
+    width: 90%;
+    max-width: 360px;
+    max-height: 70vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}}
+.picker-title {{
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}}
+.picker-close {{
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 1.2rem;
+    cursor: pointer;
+}}
+.picker-close:hover {{ color: var(--red); }}
+.picker-list {{
+    list-style: none;
+}}
+.picker-item {{
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: var(--text);
+    transition: background 0.1s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}}
+.picker-item:hover {{
+    background: var(--bg-card);
+    border-color: var(--accent);
+}}
+.picker-item.current {{
+    background: rgba(249,168,38,0.1);
+    border: 1px solid var(--accent);
+}}
+.picker-item .note-icon {{ font-size: 1rem; }}
+.picker-none {{
+    padding: 10px 12px;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    font-style: italic;
+}}
+.picker-hint {{
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    margin-top: 0.8rem;
+    opacity: 0.7;
+}}
 .vol-section {{
     text-align: center;
     margin-bottom: 1rem;
@@ -701,6 +794,18 @@ h1 {{
 
 <div class="footer">squeaking out signals since 2025 &middot; 73 de VK2JNC</div>
 
+<!-- Sound picker modal -->
+<div class="picker-overlay" id="pickerOverlay" onclick="if(event.target===this)closePicker()">
+    <div class="picker">
+        <div class="picker-title">
+            <span>Assign to key <strong id="pickerKey">?</strong></span>
+            <button class="picker-close" onclick="closePicker()">&times;</button>
+        </div>
+        <ul class="picker-list" id="pickerList"></ul>
+        <div class="picker-hint">Click a sound to assign. The sound name under each key is clickable.</div>
+    </div>
+</div>
+
 <script>
 function trigger(k) {{
   fetch('/api/trigger', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{key:k}})}})
@@ -729,6 +834,48 @@ function panic() {{
   setTimeout(()=>document.body.style.animation = '', 100);
 }}
 function reloadSounds() {{ fetch('/api/reload',{{method:'POST'}}); }}
+
+// Sound picker
+let pickerKey = '';
+function openPicker(key) {{
+  pickerKey = key;
+  document.getElementById('pickerKey').textContent = key;
+  fetch('/api/keys').then(r=>r.json()).then(d=>{{
+    const list = document.getElementById('pickerList');
+    const current = d.keys[key];
+    list.innerHTML = '';
+    // "Unassign" option
+    const none = document.createElement('li');
+    none.className = 'picker-item picker-none';
+    none.textContent = '(unassign)';
+    none.onclick = () => assignKey(key, '');
+    list.appendChild(none);
+    // All available sounds
+    d.available_sounds.forEach(snd => {{
+      const li = document.createElement('li');
+      li.className = 'picker-item' + (snd === current ? ' current' : '');
+      li.innerHTML = `<span class="note-icon">&#9835;</span> ${{snd}}`;
+      li.onclick = () => assignKey(key, snd);
+      list.appendChild(li);
+    }});
+  }});
+  document.getElementById('pickerOverlay').classList.add('open');
+}}
+function closePicker() {{
+  document.getElementById('pickerOverlay').classList.remove('open');
+}}
+function assignKey(key, sound) {{
+  fetch('/api/keys', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{key, sound}})}})
+  .then(r=>r.json()).then(d=>{{
+    closePicker();
+    // Update the button label
+    const btn = document.querySelector(`[data-key="${{key}}"]`);
+    if(btn) {{
+      const nameEl = btn.querySelector('.sound-name');
+      nameEl.textContent = sound ? sound.replace(/\\.(wav|mp3|ogg|flac|m4a)$/,'') : '(none)';
+    }}
+  }});
+}}
 
 // Device selection
 function loadDevices() {{
