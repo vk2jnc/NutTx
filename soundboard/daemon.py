@@ -46,7 +46,8 @@ def run_daemon(engine, keys, cfg, serial_port=None, udp_port=None):
     # Web UI / HTTP API
     from soundboard.web import WebServer
     web = WebServer(engine, keys, cfg, host=cfg.get("web", {}).get("host", "0.0.0.0"),
-                    port=cfg.get("web", {}).get("port", 8347))
+                    port=cfg.get("web", {}).get("port", 8347),
+                    config_path=cfg.get("_config_path", "config.toml"))
     web.start()
     print(f"[daemon] Web UI: http://0.0.0.0:{web.port}")
 

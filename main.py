@@ -197,6 +197,7 @@ def main():
 
     if args.daemon:
         from soundboard.daemon import run_daemon
+        cfg["_config_path"] = args.config
         run_daemon(engine, keys, cfg,
                    serial_port=args.serial,
                    udp_port=args.udp if args.udp is not None else
@@ -227,8 +228,9 @@ def main():
         if not args.no_web and cfg.get("web", {}).get("enabled", True):
             from soundboard.web import WebServer
             web = WebServer(engine, keys, cfg,
-                           host=cfg.get("web", {}).get("host", "0.0.0.0"),
-                           port=args.web_port or cfg.get("web", {}).get("port", 8347))
+                            host=cfg.get("web", {}).get("host", "0.0.0.0"),
+                            port=args.web_port or cfg.get("web", {}).get("port", 8347),
+                            config_path=args.config)
             web.start()
             print(f"Web UI: http://localhost:{web.port}")
         else:

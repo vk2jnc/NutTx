@@ -152,10 +152,41 @@ class NutTxHandler(BaseHTTPRequestHandler):
             elif sound == "":
                 # Unassign
                 self.keys.pop(key, None)
-                self._json(200, {"keys": self.keys, "removed": key})
+                self._save_keys()
+                self._json(200, {"keys": self.keys, "removed": key, "saved": True})
             else:
                 self.keys[key] = sound
-                self._json(200, {"keys": self.keys, "assigned": f"{key}={sound}"})
+                self._save_keys()
+                self._json(200, {"keys": self.keys, "assigned": f"{key}={sound}", "saved": True})
+
+    def _save_keys(self) -> None:
+        """Write current key bindings back to config.toml [keys] section."""
+        config_path = getattr(self, 'config_path', None)
+        if not config_path:
+            return
+        try:
+            content = Path(config_path).read_text()
+            lines = content.split('\n')
+            # Find [keys] section
+            start = None
+            end = None
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped == '[keys]':
+                    start = i + 1
+                elif start is not None and stripped.startswith('['):
+                    end = i
+                    break
+            if start is None:
+                return  # no [keys] section, skip
+            if end is None:
+                end = len(lines)
+            # Build new key lines
+            new_lines = [f'"{k}" = "{v}"' for k, v in sorted(self.keys.items())]
+            lines[start:end] = new_lines
+            Path(config_path).write_text('\n'.join(lines))
+        except Exception as e:
+            print(f"[web] Failed to save keys: {e}")
 
         else:
             self._json(404, {"error": "not found"})
@@ -964,7 +995,8 @@ setInterval(()=>fetch('/api/status').then(r=>r.json()).then(d=>{{
 class WebServer:
     """Threaded HTTP server for NutTx control."""
 
-    def __init__(self, engine, keys: dict, cfg: dict, host: str = "0.0.0.0", port: int = 8347):
+    def __init__(self, engine, keys: dict, cfg: dict, host: str = "0.0.0.0", port: int = 8347,
+                 config_path: str = "config.toml"):
         self.host = host
         self.port = port
         self._server = None
@@ -974,6 +1006,7 @@ class WebServer:
         NutTxHandler.keys = keys
         NutTxHandler.cfg = cfg
         NutTxHandler.play_log = []
+        NutTxHandler.config_path = config_path
 
     def start(self) -> None:
         self._server = HTTPServer((self.host, self.port), NutTxHandler)
