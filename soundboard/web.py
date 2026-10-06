@@ -81,7 +81,14 @@ class NutTxHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         content_len = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_len).decode() if content_len else ""
+        raw_body = self.rfile.read(content_len) if content_len else b""
+
+        # Upload handles raw bytes (multipart)
+        if path == "/api/upload":
+            self._handle_upload(raw_body, content_len)
+            return
+
+        body = raw_body.decode() if raw_body else ""
 
         if path == "/api/trigger":
             data = json.loads(body) if body else {}
@@ -134,34 +141,31 @@ class NutTxHandler(BaseHTTPRequestHandler):
                 dev_name = sd.query_devices(self.engine.device)["name"]
             self._json(200, {"device": self.engine.device, "name": dev_name})
 
-        elif path == "/api/upload":
-            # Parse multipart form data
-            content_type = self.headers.get("Content-Type", "")
-            if "multipart/form-data" not in content_type:
-                self._json(400, {"error": "expected multipart/form-data"})
-                return
-            boundary = content_type.split("boundary=")[1].encode()
-            raw = self.rfile.read(content_len)
-            files = self._parse_multipart(raw, boundary)
-            uploaded = []
-            for filename, data in files:
-                # Sanitize filename
-                safe_name = Path(filename).name
-                ext = Path(safe_name).suffix.lower()
-                allowed = {".wav", ".mp3", ".ogg", ".flac", ".m4a"}
-                if ext not in allowed:
-                    continue
-                dest = self.engine.sounds_dir / safe_name
-                dest.write_bytes(data)
-                self.engine._load_file(dest)
-                uploaded.append(safe_name)
-            if uploaded:
-                self._json(200, {"uploaded": uploaded, "sounds": self.engine.loaded_sounds})
-            else:
-                self._json(400, {"error": "no valid audio files uploaded", "allowed": [".wav", ".mp3", ".ogg", ".flac", ".m4a"]})
-
         else:
             self._json(404, {"error": "not found"})
+
+    def _handle_upload(self, raw: bytes, content_len: int) -> None:
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._json(400, {"error": "expected multipart/form-data"})
+            return
+        boundary = content_type.split("boundary=")[1].encode()
+        files = self._parse_multipart(raw, boundary)
+        uploaded = []
+        for filename, data in files:
+            safe_name = Path(filename).name
+            ext = Path(safe_name).suffix.lower()
+            allowed = {".wav", ".mp3", ".ogg", ".flac", ".m4a"}
+            if ext not in allowed:
+                continue
+            dest = self.engine.sounds_dir / safe_name
+            dest.write_bytes(data)
+            self.engine._load_file(dest)
+            uploaded.append(safe_name)
+        if uploaded:
+            self._json(200, {"uploaded": uploaded, "sounds": self.engine.loaded_sounds})
+        else:
+            self._json(400, {"error": "no valid audio files uploaded", "allowed": [".wav", ".mp3", ".ogg", ".flac", ".m4a"]})
 
     def _parse_multipart(self, data: bytes, boundary: bytes) -> list[tuple[str, bytes]]:
         """Parse multipart form data, return list of (filename, content)."""
