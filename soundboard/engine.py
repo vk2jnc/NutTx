@@ -104,16 +104,18 @@ class Engine:
 
         data = sound.data * (self.global_volume * sound.volume)
 
-        def _done():
-            with self._lock:
-                self._active.discard(name)
-
         if blocking:
             sd.play(data, self.sample_rate, device=self.device)
             sd.wait()
-            _done()
+            with self._lock:
+                self._active.discard(name)
         else:
-            sd.play(data, self.sample_rate, device=self.device, callback=_done)
+            def _play_bg():
+                sd.play(data, self.sample_rate, device=self.device)
+                sd.wait()
+                with self._lock:
+                    self._active.discard(name)
+            threading.Thread(target=_play_bg, daemon=True).start()
         return True
 
     def play_file(self, filepath: str, blocking: bool = True) -> bool:

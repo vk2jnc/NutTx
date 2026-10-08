@@ -21,6 +21,7 @@ auto_mute_secs = 0
 
 # Key bindings: key -> sound filename
 [keys]
+"0" = "sgc-offworld-alarm"
 "1" = "cQ.wav"
 "2" = "73.wav"
 "3" = "thank_you.wav"
@@ -30,9 +31,6 @@ auto_mute_secs = 0
 "7" = "alert.wav"
 "8" = "id.wav"
 "9" = "custom1.wav"
-"0" = "custom2.wav"
-
-# Per-sound volume overrides (filename -> multiplier)
 [overrides]
 # "alert.wav" = 1.0
 # "key_click.wav" = 0.5
