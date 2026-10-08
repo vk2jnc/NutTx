@@ -242,11 +242,25 @@ class NutTxHandler(BaseHTTPRequestHandler):
 
     def _get_ui(self) -> str:
         sounds = self.engine.loaded_sounds
+        sounds_set = set(sounds)
         key_map = self.keys
         items = ""
         for key in sorted(key_map.keys()):
             snd = key_map[key]
-            items += f'<button class="pad" data-key="{key}" onclick="trigger(\'{key}\')"><span class="key-label">{key}</span><span class="sound-name" onclick="event.stopPropagation();openPicker(\'{key}\')">{snd.replace(".wav","").replace(".mp3","").replace(".ogg","")}</span><span class="pulse-ring"></span></button>\n'
+            # Check if this sound is actually loaded (match by stem or full name)
+            snd_stem = Path(snd).stem
+            is_loaded = snd in sounds_set or snd_stem in sounds_set
+            cls = "pad loaded" if is_loaded else "pad missing"
+            label = snd_stem
+            status_dot = "&#9679;" if is_loaded else "&#9675;"
+            items += f'<button class="{cls}" data-key="{key}" onclick="trigger(\'{key}\')"><span class="key-label">{key}</span><span class="sound-name" onclick="event.stopPropagation();openPicker(\'{key}\')">{status_dot} {label}</span><span class="pulse-ring"></span></button>\n'
+
+        # Unassigned sounds (loaded but not in keys)
+        assigned_sounds = set()
+        for v in key_map.values():
+            assigned_sounds.add(v)
+            assigned_sounds.add(Path(v).stem)
+        unassigned = [s for s in sounds if s not in assigned_sounds]
 
         return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -506,6 +520,34 @@ h1 {{
 .upload-status.error {{ color: var(--red); }}
 .sound-name {{ cursor: pointer; }}
 .sound-name:hover {{ color: var(--accent); text-decoration: underline; }}
+.pad.loaded {{ border-color: rgba(63,185,80,0.4); }}
+.pad.loaded .sound-name {{ color: var(--green); }}
+.pad.missing {{ opacity: 0.5; border-style: dashed; }}
+.pad.missing .sound-name {{ color: var(--red); }}
+.pad.missing:hover {{ opacity: 0.8; }}
+
+/* Unassigned sounds list */
+.unassigned-panel {{
+    margin-bottom: 1rem;
+}}
+.unassigned-list {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}}
+.sound-chip {{
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 0.7rem;
+    color: var(--text);
+    cursor: default;
+}}
+.sound-chip::before {{
+    content: '&#9835; ';
+    color: var(--accent);
+}}
 
 /* Sound picker modal */
 .picker-overlay {{
@@ -775,6 +817,8 @@ h1 {{
     <div class="grid">
     {items}
     </div>
+
+    {"<div class=\"panel unassigned-panel\"><div class=\"panel-title\">&#127925; Loaded Sounds (unassigned)</div><div class=\"unassigned-list\">" + "".join(f'<span class=\"sound-chip\">{s}</span>' for s in unassigned) + "</div></div>" if unassigned else ""}
 
     <div class="controls">
         <div class="vol-section">
