@@ -302,3 +302,7 @@ NutTx/
 
 Squirrels hoard nuts. Ham operators transmit. NutTx hoards sounds and
 transmits them on command.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
