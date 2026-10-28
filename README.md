@@ -33,16 +33,17 @@ python main.py --test sounds/cQ.wav
 - **MIDI input** — USB keyboard/controller triggers
 - **Web UI + HTTP API** — trigger from phone, tablet, browser
 - **Tone generator** — CW, Morse, beeps, DTMF, SID tones, ARPTone
+- **TTS** — speak any text via an OpenAI-compatible endpoint (CLI, web, API)
 - **Sequencer** — play sound chains in order
 - **Loop mode** — loop any sound indefinitely
-- **Fade in/out** — clean audio transitions
+- **Fade in/out** — clean audio transitions (`--play --fade-in/--fade-out`)
 - **Recording** — capture mic input as a new sound
 - **Sound banks** — switch between radio/streaming/generic presets
 - **Panic button** — instant hard-stop of all audio
-- **Ducking** — reduce volume for priority sounds
+- **Ducking** — reduce volume for priority sounds (`d`/`u` keys, `/api/duck`)
 - **Auto-mute** — silence after idle timeout
 - **Daemon mode** — headless, runs in background
-- **Logging** — timestamped playback history
+- **Logging** — timestamped playback history (`--log-file`, `[log]` config)
 - **3D-printable button pad** — design spec included
 - **Systemd service** — auto-start on boot
 
@@ -61,7 +62,6 @@ channels = 1
 
 [global]
 volume = 0.8
-auto_mute_secs = 0
 
 [keys]
 "1" = "cQ.wav"
@@ -72,9 +72,18 @@ auto_mute_secs = 0
 enabled = true
 port = 8347
 
+[tts]
+enabled = true
+base_url = "https://llm.codesquirrel.com.au/v1"
+key_env = "CUSTOM_PROVIDER_SQUIRRELCLAWED_KEY"
+model = "TTS"
+voice = "alloy"
+
 [safety]
 duck_level = 0.1
 duck_release_ms = 200
+# Auto-mute after N seconds idle (0 = disabled)
+auto_mute_secs = 0
 
 [midi]
 enabled = false
@@ -91,6 +100,8 @@ device = "default"
 |-----|--------|
 | 1-0 | Play bound sound |
 | m   | Mute / unmute |
+| d   | Duck (lower volume for priority sounds) |
+| u   | Unduck (restore volume) |
 | l   | Reload sounds from disk |
 | q   | Quit |
 
@@ -149,9 +160,41 @@ curl -X POST http://localhost:8347/api/mute
 # Panic (stop all)
 curl -X POST http://localhost:8347/api/panic
 
+# Duck / unduck (priority sounds)
+curl -X POST http://localhost:8347/api/duck -d '{"duck":true}'
+curl -X POST http://localhost:8347/api/duck -d '{"duck":false}'
+
+# TTS status / speak
+curl http://localhost:8347/api/tts
+curl -X POST http://localhost:8347/api/tts -d '{"text":"Break break break"}'
+
 # Status
 curl http://localhost:8347/api/status
 ```
+
+## Text-to-Speech (TTS)
+
+Synthesizes text with an OpenAI-compatible `/audio/speech` endpoint and
+plays the clip through the same output path as the soundbank. Uses
+stdlib `urllib` only — no new dependencies.
+
+The API key is **never stored in config** — it's read at request time
+from the environment variable named by `tts.key_env` (default
+`CUSTOM_PROVIDER_SQUIRRELCLAWED_KEY`):
+
+```bash
+export CUSTOM_PROVIDER_SQUIRRELCLAWED_KEY=sk-...
+
+# CLI
+python main.py --speak "Break break break, station VK2JNC"
+
+# Web UI: the "Say It" panel, or:
+curl -X POST http://localhost:8347/api/tts -d '{"text":"CQ CQ CQ"}'
+```
+
+Config (`[tts]` section): `enabled`, `base_url`, `key_env`, `model`,
+`voice`, `cache_dir` (optional: persist generated MP3s), `max_text_chars`,
+`request_timeout`.
 
 ## Tone Generator
 
@@ -186,6 +229,9 @@ python main.py --seq check_in
 
 # Loop a sound (Ctrl+C to stop)
 python main.py --loop alert.wav
+
+# Play a loaded sound with fade in/out
+python main.py --play sgc-offworld-alarm --fade-in 0.2 --fade-out 0.5
 ```
 
 ## Recording
@@ -277,6 +323,7 @@ NutTx/
 │   ├── ui.py             # Curses TUI
 │   ├── daemon.py         # Headless daemon mode
 │   ├── web.py            # Web UI + HTTP API
+│   ├── tts.py            # Text-to-speech (OpenAI-compatible)
 │   ├── tones.py          # Tone/CW/Morse/DTMF generator
 │   ├── sequencer.py      # Sequences, loops, recording
 │   ├── midi.py           # MIDI input

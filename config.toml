@@ -16,15 +16,13 @@ channels = 1
 [global]
 # Global volume multiplier (0.0 - 1.0)
 volume = 0.8
-# Auto-mute after N seconds of no activity (0 = disabled)
-auto_mute_secs = 0
 
 # Key bindings: key -> sound filename
 [keys]
 "0" = "sgc-offworld-alarm"
-"1" = "cQ.wav"
-"2" = "73.wav"
-"3" = "thank_you.wav"
+"1" = "test_tone"
+"2" = "sga-midway-selfdestruct"
+"3" = "sgc-gate-active-alarm"
 "4" = "roger.wav"
 "5" = "break.wav"
 "6" = "key_click.wav"
@@ -41,13 +39,29 @@ enabled = true
 host = "0.0.0.0"
 port = 8347
 
+# Text-to-speech (SquirrelClawed OpenAI-compatible proxy)
+[tts]
+enabled = true
+# Base URL of the endpoint (no trailing slash)
+base_url = "https://llm.codesquirrel.com.au/v1"
+# API key is read from THIS environment variable -- never stored here
+key_env = "CUSTOM_PROVIDER_SQUIRRELCLAWED_KEY"
+model = "TTS"
+voice = "alloy"
+# Optional dir to persist generated clips ("" = in-memory only)
+cache_dir = ""
+# Safety caps
+max_text_chars = 500
+request_timeout = 30
+
 # Safety features
 [safety]
 # Duck volume to this level when ducking (for priority sounds)
 duck_level = 0.1
 # Time (ms) before volume restores after duck
 duck_release_ms = 200
-# Auto-mute after N seconds idle (0 = disabled)
+# Auto-mute after N seconds idle (0 = disabled). Trigger duck with 'd',
+# restore with 'u' (TUI/ESP32), or POST /api/duck {"duck": true|false}
 auto_mute_secs = 0
 
 # MIDI input

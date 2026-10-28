@@ -11,3 +11,4 @@ sounds/*.ogg
 sounds/*.flac
 sounds/*.m4a
 !sounds/README.md
+.clinerules/

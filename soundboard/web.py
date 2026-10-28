@@ -12,12 +12,17 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 
+from soundboard.tts import TTSClient
+from soundboard.playlog import PlayLog
+from soundboard.safety import Safety
+
 
 class NutTxHandler(BaseHTTPRequestHandler):
     engine = None
     keys = None
     cfg = None
-    play_log = []
+    playlog: PlayLog | None = None
+    safety: Safety | None = None
 
     def log_message(self, format, *args):
         pass  # suppress request logging
@@ -65,7 +70,7 @@ class NutTxHandler(BaseHTTPRequestHandler):
         elif path == "/api/keys":
             self._json(200, {"keys": self.keys, "available_sounds": self.engine.loaded_sounds})
         elif path == "/api/log":
-            self._json(200, {"log": self.play_log[-100:]})
+            self._json(200, {"log": self.playlog.recent(100) if self.playlog else []})
         elif path == "/api/devices":
             import sounddevice as sd
             devices = []
@@ -77,6 +82,8 @@ class NutTxHandler(BaseHTTPRequestHandler):
             self._json(200, {"devices": devices, "current": self.engine.device})
         elif path == "/api/health":
             self._json(200, {"status": "ok", "uptime": time.time()})
+        elif path == "/api/tts":
+            self._json(200, {"tts": self.tts.status() if self.tts else "disabled"})
         else:
             self._json(404, {"error": "not found"})
 
@@ -97,13 +104,8 @@ class NutTxHandler(BaseHTTPRequestHandler):
             key = data.get("key", "")
             if key in self.keys:
                 ok = self.engine.play(self.keys[key])
-                self.play_log.append({
-                    "ts": time.strftime("%H:%M:%S"),
-                    "key": key,
-                    "sound": self.keys[key],
-                    "src": "web",
-                    "ok": ok,
-                })
+                if self.playlog:
+                    self.playlog.record(key, self.keys[key], "web", ok)
                 self._json(200, {"played": self.keys[key], "ok": ok})
             else:
                 self._json(400, {"error": f"unknown key: {key}"})
@@ -121,8 +123,21 @@ class NutTxHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/panic":
             self.engine.stop_all()
-            self.play_log.append({"ts": time.strftime("%H:%M:%S"), "action": "panic", "src": "web"})
+            if self.playlog:
+                self.playlog.record("panic", "-", "web")
             self._json(200, {"stopped": True})
+
+        elif path == "/api/duck":
+            data = json.loads(body) if body else {}
+            if self.safety is None:
+                self._json(400, {"error": "safety not available"})
+                return
+            if data.get("duck", True):
+                self.safety.duck()
+            else:
+                self.safety.unduck()
+            self._json(200, {"ducked": self.safety._ducked,
+                            "volume": self.engine.global_volume})
 
         elif path == "/api/reload":
             self.engine._load_all()
@@ -158,6 +173,24 @@ class NutTxHandler(BaseHTTPRequestHandler):
                 self.keys[key] = sound
                 self._save_keys()
                 self._json(200, {"keys": self.keys, "assigned": f"{key}={sound}", "saved": True})
+
+        elif path == "/api/tts":
+            data = json.loads(body) if body else {}
+            text = data.get("text", "")
+            if self.tts is None or not self.tts.available():
+                self._json(400, {"error": f"tts unavailable: {self.tts.status() if self.tts else 'disabled'}"})
+                return
+            try:
+                ok = self.tts.speak(text, self.engine, blocking=False)
+            except ValueError as e:
+                self._json(400, {"error": str(e)})
+                return
+            except Exception as e:
+                self._json(502, {"error": f"tts failed: {e}"})
+                return
+            if self.playlog:
+                self.playlog.record("tts", text[:40] or "-", "web", ok)
+            self._json(200, {"ok": ok, "text": text})
 
     def _save_keys(self) -> None:
         """Write current key bindings back to config.toml [keys] section."""
@@ -831,9 +864,39 @@ h1 {{
         </div>
         <div class="btn-row">
             <button class="btn" id="muteBtn" onclick="toggleMute()">Mute</button>
+            <button class="btn" id="duckBtn" onclick="toggleDuck()">Duck</button>
             <button class="btn btn-panic" onclick="panic()">Panic</button>
             <button class="btn btn-reload" onclick="reloadSounds()">Reload</button>
         </div>
+    </div>
+
+    <!-- Text-to-speech -->
+    <style>
+      #ttsPanel {{ margin-top: 14px; }}
+      .tts-row {{ display: flex; gap: 10px; margin-top: 10px; }}
+      .tts-input {{
+        flex: 1; padding: 10px 14px; border-radius: 8px;
+        border: 1px solid var(--border); background: var(--bg-deep);
+        color: var(--text); font-family: inherit; font-size: 0.9rem;
+      }}
+      .tts-input:focus {{ outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }}
+      .tts-btn {{
+        padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer;
+        background: linear-gradient(135deg, var(--accent), var(--nut)); color: #1a1a1a;
+        font-weight: 700; font-family: inherit; letter-spacing: 1px;
+      }}
+      .tts-btn:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+      .tts-badge {{ margin-left: 8px; font-size: 0.65rem; color: var(--text-dim); text-transform: lowercase; }}
+      .tts-msg {{ margin-top: 8px; font-size: 0.75rem; color: var(--text-dim); min-height: 1em; }}
+      .tts-msg.err {{ color: var(--red); }}
+    </style>
+    <div class="panel" id="ttsPanel">
+        <div class="panel-title">&#127908; Say It <span id="ttsStatus" class="tts-badge">checking...</span></div>
+        <div class="tts-row">
+            <input type="text" id="ttsInput" class="tts-input" placeholder="Type a word or phrase to speak..." onkeydown="if(event.key==='Enter')speakIt()">
+            <button class="btn tts-btn" id="ttsBtn" onclick="speakIt()">Speak</button>
+        </div>
+        <div class="tts-msg" id="ttsMsg"></div>
     </div>
 
     <!-- Device selector -->
@@ -909,6 +972,15 @@ function panic() {{
   setTimeout(()=>document.body.style.animation = '', 100);
 }}
 function reloadSounds() {{ fetch('/api/reload',{{method:'POST'}}); }}
+function toggleDuck() {{
+  const btn = document.getElementById('duckBtn');
+  const wantDuck = btn.textContent === 'Duck';
+  fetch('/api/duck', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body: JSON.stringify({{duck: wantDuck}})}})
+  .then(r=>r.json()).then(d=>{{
+    btn.textContent = d.ducked ? 'Unduck' : 'Duck';
+    btn.classList.toggle('mute-active', d.ducked);
+  }});
+}}
 
 // Sound picker
 let pickerKey = '';
@@ -981,6 +1053,34 @@ function setDevice(idx) {{
 }}
 loadDevices();
 
+// Text-to-speech
+function speakIt() {{
+  const el = document.getElementById('ttsInput');
+  const msg = document.getElementById('ttsMsg');
+  const btn = document.getElementById('ttsBtn');
+  const text = el.value.trim();
+  if(!text) {{ msg.className='tts-msg'; msg.textContent='Type something first'; return; }}
+  btn.disabled = true;
+  msg.className = 'tts-msg';
+  msg.textContent = 'Synthesizing...';
+  fetch('/api/tts', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body: JSON.stringify({{text}})}})
+  .then(r=>r.json()).then(d=>{{
+    btn.disabled = false;
+    if(d.ok) {{ msg.textContent = 'Said: "' + d.text + '"'; }}
+    else {{ msg.className='tts-msg err'; msg.textContent = d.error || 'failed'; }}
+  }}).catch(e=>{{
+    btn.disabled = false;
+    msg.className = 'tts-msg err';
+    msg.textContent = 'TTS error: ' + e;
+  }});
+}}
+function loadTtsStatus() {{
+  fetch('/api/tts').then(r=>r.json()).then(d=>{{
+    document.getElementById('ttsStatus').textContent = d.tts;
+  }}).catch(()=>{{ document.getElementById('ttsStatus').textContent = 'offline'; }});
+}}
+loadTtsStatus();
+
 // File upload
 function uploadFiles(files) {{
   if(!files || files.length === 0) return;
@@ -1040,7 +1140,8 @@ class WebServer:
     """Threaded HTTP server for NutTx control."""
 
     def __init__(self, engine, keys: dict, cfg: dict, host: str = "0.0.0.0", port: int = 8347,
-                 config_path: str = "config.toml"):
+                 config_path: str = "config.toml", playlog: PlayLog | None = None,
+                 safety: Safety | None = None):
         self.host = host
         self.port = port
         self._server = None
@@ -1049,8 +1150,10 @@ class WebServer:
         NutTxHandler.engine = engine
         NutTxHandler.keys = keys
         NutTxHandler.cfg = cfg
-        NutTxHandler.play_log = []
+        NutTxHandler.playlog = playlog or PlayLog()
+        NutTxHandler.safety = safety or Safety(engine, cfg)
         NutTxHandler.config_path = config_path
+        NutTxHandler.tts = TTSClient(cfg)
 
     def start(self) -> None:
         self._server = HTTPServer((self.host, self.port), NutTxHandler)

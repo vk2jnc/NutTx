@@ -1,5 +1,6 @@
 """Core audio playback engine."""
 
+import io
 import threading
 import numpy as np
 import sounddevice as sd
@@ -128,6 +129,37 @@ class Engine:
         sd.play(data, self.sample_rate, device=self.device)
         if blocking:
             sd.wait()
+        return True
+
+    def play_clip(self, data: bytes, name: str = "tts", blocking: bool = False) -> bool:
+        """Play raw audio bytes (e.g. a TTS MP3) through the same output path.
+
+        Decodes via soundfile, resamples to the device rate, converts to the
+        configured channel count, and plays -- exactly like a preloaded sound.
+        Non-blocking by default (plays in a background thread, like play()).
+        """
+        try:
+            arr, sr = sf.read(io.BytesIO(data), dtype="float32", always_2d=False)
+        except Exception as e:
+            print(f"[{name}] decode failed: {e}")
+            return False
+        if arr.ndim == 0:
+            arr = arr.reshape(1)
+        if sr != self.sample_rate:
+            arr = self._resample(arr, sr, self.sample_rate)
+        if arr.ndim == 2 and self.channels == 1:
+            arr = arr.mean(axis=1)
+        elif arr.ndim == 1 and self.channels == 2:
+            arr = np.column_stack([arr, arr])
+        out = arr * self.global_volume
+        if blocking:
+            sd.play(out, self.sample_rate, device=self.device)
+            sd.wait()
+        else:
+            def _bg():
+                sd.play(out, self.sample_rate, device=self.device)
+                sd.wait()
+            threading.Thread(target=_bg, daemon=True).start()
         return True
 
     def is_playing(self, name: str) -> bool:

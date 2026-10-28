@@ -18,6 +18,13 @@ def load_config(path: str = "config.toml") -> dict:
             "global": {"volume": 0.8},
             "keys": {},
             "overrides": {},
+            "tts": {
+                "enabled": False,
+                "base_url": "",
+                "key_env": "CUSTOM_PROVIDER_SQUIRRELCLAWED_KEY",
+                "model": "TTS",
+                "voice": "alloy",
+            },
         }
     with open(p, "rb") as f:
         return tomllib.load(f)
