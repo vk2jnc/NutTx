@@ -10,6 +10,9 @@ and more.
 ## Quick Start
 
 ```bash
+# Create your local config (gitignored - devices, binds & endpoints stay local)
+cp config.example.toml config.toml
+
 pip install -r requirements.txt
 
 # List audio devices
@@ -49,7 +52,12 @@ python main.py --test sounds/cQ.wav
 
 ## Configuration
 
-Edit `config.toml`:
+`config.toml` is **gitignored** — copy the template and edit freely,
+your devices, key bindings and TTS endpoint never get committed:
+
+```bash
+cp config.example.toml config.toml
+```
 
 ```toml
 [device]
@@ -73,10 +81,10 @@ enabled = true
 port = 8347
 
 [tts]
-enabled = true
-base_url = "https://llm.codesquirrel.com.au/v1"
-key_env = "CUSTOM_PROVIDER_SQUIRRELCLAWED_KEY"
-model = "TTS"
+enabled = false
+base_url = ""          # e.g. "https://your-tts-host/v1"
+key_env = "NUTTX_TTS_API_KEY"
+model = "tts-1"
 voice = "alloy"
 
 [safety]
@@ -174,27 +182,45 @@ curl http://localhost:8347/api/status
 
 ## Text-to-Speech (TTS)
 
-Synthesizes text with an OpenAI-compatible `/audio/speech` endpoint and
-plays the clip through the same output path as the soundbank. Uses
+Synthesizes text with **any OpenAI-compatible `/audio/speech` endpoint**
+and plays the clip through the same output path as the soundbank. Uses
 stdlib `urllib` only — no new dependencies.
 
-The API key is **never stored in config** — it's read at request time
-from the environment variable named by `tts.key_env` (default
-`CUSTOM_PROVIDER_SQUIRRELCLAWED_KEY`):
+Nothing is hardcoded. Set the endpoint, model and voice in `[tts]`, or
+override any of them with environment variables (env wins over config):
+
+| Setting | `[tts]` config key | Env override |
+|---------|--------------------|--------------|
+| Enable | `enabled` | `NUTTX_TTS_ENABLED=1` |
+| Endpoint | `base_url` | `NUTTX_TTS_BASE_URL` |
+| Key variable name | `key_env` | `NUTTX_TTS_KEY_ENV` |
+| API key | — (env only) | `NUTTX_TTS_API_KEY` (default `key_env`) |
+| Model | `model` | `NUTTX_TTS_MODEL` |
+| Voice | `voice` | `NUTTX_TTS_VOICE` |
+
+The API key is **never stored in config files** — it's only ever read
+from the environment at request time:
 
 ```bash
-export CUSTOM_PROVIDER_SQUIRRELCLAWED_KEY=sk-...
+# Option A: pure environment (no config.toml [tts] edits needed)
+export NUTTX_TTS_ENABLED=1
+export NUTTX_TTS_BASE_URL="https://your-tts-host/v1"
+export NUTTX_TTS_API_KEY="sk-..."
+export NUTTX_TTS_VOICE="nova"
+
+# Option B: config.toml [tts] section + key env var
+export NUTTX_TTS_API_KEY="sk-..."
 
 # CLI
 python main.py --speak "Break break break, station VK2JNC"
 
 # Web UI: the "Say It" panel, or:
 curl -X POST http://localhost:8347/api/tts -d '{"text":"CQ CQ CQ"}'
+curl http://localhost:8347/api/tts   # status (host/model/voice, key masked)
 ```
 
-Config (`[tts]` section): `enabled`, `base_url`, `key_env`, `model`,
-`voice`, `cache_dir` (optional: persist generated MP3s), `max_text_chars`,
-`request_timeout`.
+Other `[tts]` options: `cache_dir` (optional: persist generated MP3s),
+`max_text_chars`, `request_timeout`.
 
 ## Tone Generator
 
@@ -313,7 +339,7 @@ Drop audio files in `sounds/`. Referenced by filename stem in config.
 ```
 NutTx/
 ├── main.py               # Entry point
-├── config.toml           # Configuration
+├── config.example.toml   # Config template (copy to config.toml; gitignored)
 ├── pyproject.toml        # Package definition
 ├── requirements.txt
 ├── soundboard/

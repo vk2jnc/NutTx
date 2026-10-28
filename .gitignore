@@ -12,3 +12,7 @@ sounds/*.flac
 sounds/*.m4a
 !sounds/README.md
 .clinerules/
+
+# local rig config - copy config.example.toml to config.toml;
+# personal devices, key bindings and TTS endpoints never get committed
+config.toml

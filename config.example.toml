@@ -1,3 +1,8 @@
+# NutTx configuration template.
+# Copy to config.toml and edit - config.toml is gitignored, so your
+# devices, key bindings and TTS endpoint stay local:
+#   cp config.example.toml config.toml
+
 [device]
 # Name or index of the output device
 # Run with --list-devices to see options
@@ -17,21 +22,15 @@ channels = 1
 # Global volume multiplier (0.0 - 1.0)
 volume = 0.8
 
-# Key bindings: key -> sound filename
+# Key bindings: key -> sound filename (filename stem works too)
 [keys]
-"0" = "sgc-offworld-alarm"
-"1" = "test_tone"
-"2" = "sga-midway-selfdestruct"
-"3" = "sgc-gate-active-alarm"
-"4" = "roger.wav"
-"5" = "break.wav"
-"6" = "key_click.wav"
-"7" = "alert.wav"
-"8" = "id.wav"
-"9" = "custom1.wav"
+# "1" = "cQ"
+# "2" = "73"
+
 [overrides]
-# "alert.wav" = 1.0
-# "key_click.wav" = 0.5
+# Per-sound volume multipliers
+# "alert" = 1.0
+# "key_click" = 0.5
 
 # Web UI / HTTP API
 [web]
@@ -39,14 +38,18 @@ enabled = true
 host = "0.0.0.0"
 port = 8347
 
-# Text-to-speech (SquirrelClawed OpenAI-compatible proxy)
+# Text-to-speech (any OpenAI-compatible /audio/speech endpoint).
+# Every value can be overridden by env vars (env wins):
+#   NUTTX_TTS_ENABLED, NUTTX_TTS_BASE_URL, NUTTX_TTS_KEY_ENV,
+#   NUTTX_TTS_API_KEY, NUTTX_TTS_MODEL, NUTTX_TTS_VOICE
 [tts]
-enabled = true
-# Base URL of the endpoint (no trailing slash)
-base_url = "https://llm.codesquirrel.com.au/v1"
-# API key is read from THIS environment variable -- never stored here
-key_env = "CUSTOM_PROVIDER_SQUIRRELCLAWED_KEY"
-model = "TTS"
+enabled = false
+# Base URL of the endpoint (no trailing slash), e.g. "https://your-tts-host/v1"
+base_url = ""
+# API key is read from THIS environment variable -- never stored here.
+# Default: NUTTX_TTS_API_KEY
+key_env = "NUTTX_TTS_API_KEY"
+model = "tts-1"
 voice = "alloy"
 # Optional dir to persist generated clips ("" = in-memory only)
 cache_dir = ""
@@ -77,9 +80,8 @@ device = "default"
 
 # Sound sequences (trigger with --seq NAME)
 [sequences]
-# "check_in" = ["cQ.wav", "id.wav"]
-# "call_sign" = ["alert.wav", "id.wav", "73.wav"]
-# "de_key" = ["break.wav", "break.wav"]
+# "check_in" = ["cQ", "id"]
+# "call_sign" = ["alert", "id", "73"]
 
 # Logging
 [log]

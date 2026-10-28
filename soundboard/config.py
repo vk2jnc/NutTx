@@ -21,8 +21,8 @@ def load_config(path: str = "config.toml") -> dict:
             "tts": {
                 "enabled": False,
                 "base_url": "",
-                "key_env": "CUSTOM_PROVIDER_SQUIRRELCLAWED_KEY",
-                "model": "TTS",
+                "key_env": "NUTTX_TTS_API_KEY",
+                "model": "tts-1",
                 "voice": "alloy",
             },
         }
