@@ -1,15 +1,20 @@
 # NutTx - systemd service unit
 #
-# Install:
+# Install (system-wide):
 #   sudo cp systemd/nuttx.service /etc/systemd/system/nuttx.service
+#   Edit the User=, WorkingDirectory= and ExecStart= paths below
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable nuttx
 #   sudo systemctl start nuttx
 #
-# Or for a single user (no sudo):
+# Or for a single user (no sudo) - remove the User= line:
 #   cp systemd/nuttx.service ~/.config/systemd/user/nuttx.service
+#   Edit the paths below, delete the User= line
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now nuttx
+#
+# NOTE: no WatchdogSec on purpose - a plain Python process cannot send
+# sd_notify watchdog pings, so systemd would kill NutTx after the timeout.
 
 [Unit]
 Description=NutTx Soundboard
@@ -17,16 +22,16 @@ After=network.target sound.target
 
 [Service]
 Type=simple
-User=%i
-WorkingDirectory=/home/%i/git/NutTx
-ExecStart=/home/%i/.local/bin/python3 main.py --daemon -c config.toml --udp 5566
+# EDIT ME: the user that runs NutTx
+User=jamie
+WorkingDirectory=/home/jamie/git/NutTx
+# EDIT ME: full path to your python (check with: which python3)
+# Add --udp 5566 here if you use the ESP32 WiFi pad
+ExecStart=/home/jamie/.local/bin/python3 main.py --daemon -c config.toml
 Restart=on-failure
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1
-
-# Safety: kill after 5s if it wedges
-TimeoutStartSec=5
-WatchdogSec=30
+TimeoutStartSec=10
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

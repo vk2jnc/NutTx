@@ -1,33 +1,49 @@
 """Daemon mode: run NutTx headless without TUI."""
 
 import signal
-import sys
 import time
 
+from soundboard.safety import Safety
+from soundboard.playlog import PlayLog
 
-def run_daemon(engine, keys, cfg, serial_port=None, udp_port=None):
+
+def run_daemon(engine, keys, cfg, serial_port=None, udp_port=None,
+               web_port=None, playlog: PlayLog | None = None):
     """Run NutTx as a background daemon.
 
-    Listens on keyboard (via pty), serial, and/or UDP.
+    Listens on serial, UDP, MIDI and the web UI.
     Stays alive until SIGTERM/SIGINT.
     """
+    playlog = playlog or PlayLog()
+    safety = Safety(engine, cfg)
+    safety.start_watchdog()
+
     print("[daemon] NutTx daemon started")
     print(f"[daemon] Device: {engine.device}, Rate: {engine.sample_rate} Hz, "
           f"Ch: {engine.channels}, Vol: {engine.global_volume}")
     print(f"[daemon] Sounds loaded: {len(engine.loaded_sounds)}")
 
-    def trigger_key(ch: str):
+    def trigger_key(ch: str, source: str = "daemon"):
+        safety.touch()
         if ch == "m":
-            cfg_vol = cfg["global"].get("volume", 0.8)
-            engine.global_volume = 0.0 if engine.global_volume > 0 else cfg_vol
+            if safety.is_muted():
+                safety.unmute()
+            else:
+                engine.global_volume = 0.0
             print(f"[daemon] Mute: {'ON' if engine.global_volume == 0 else 'OFF'}")
         elif ch == "p":
-            engine.stop_all()
-            print("[daemon] PANIC - all stopped")
+            safety.panic()
+        elif ch == "d":
+            safety.duck()
+            print("[daemon] Ducking")
+        elif ch == "u":
+            safety.unduck()
+            print("[daemon] Unducked")
         elif ch in keys:
             ok = engine.play(keys[ch])
+            playlog.record(ch, keys[ch], source, ok)
             if ok:
-                print(f"[daemon] Play: {keys[ch]}")
+                print(f"[daemon] Play: {keys[ch]} ({source})")
 
     # Start external inputs
     serial_input = None
@@ -35,28 +51,38 @@ def run_daemon(engine, keys, cfg, serial_port=None, udp_port=None):
 
     if serial_port:
         from soundboard.serial_input import SerialInput
-        serial_input = SerialInput(serial_port, trigger_key)
+        serial_input = SerialInput(serial_port, lambda ch: trigger_key(ch, "serial"))
         serial_input.start()
 
     if udp_port:
         from soundboard.udp_input import UDPInput
-        udp_input = UDPInput(udp_port, trigger_key)
+        udp_input = UDPInput(udp_port, lambda ch: trigger_key(ch, "udp"))
         udp_input.start()
 
-    # Web UI / HTTP API
-    from soundboard.web import WebServer
-    web = WebServer(engine, keys, cfg, host=cfg.get("web", {}).get("host", "0.0.0.0"),
-                    port=cfg.get("web", {}).get("port", 8347),
-                    config_path=cfg.get("_config_path", "config.toml"))
-    web.start()
-    print(f"[daemon] Web UI: http://0.0.0.0:{web.port}")
+    # Web UI / HTTP API (respects config + --no-web via cfg flag)
+    web = None
+    if cfg.get("web", {}).get("enabled", True):
+        from soundboard.web import WebServer
+        web = WebServer(engine, keys, cfg, host=cfg.get("web", {}).get("host", "0.0.0.0"),
+                        port=web_port or cfg.get("web", {}).get("port", 8347),
+                        config_path=cfg.get("_config_path", "config.toml"),
+                        playlog=playlog, safety=safety)
+        web.start()
+        print(f"[daemon] Web UI: http://0.0.0.0:{web.port}")
+    else:
+        print("[daemon] Web UI disabled by config")
 
     # MIDI input
     midi_input = None
     if cfg.get("midi", {}).get("enabled", False):
         try:
             from soundboard.midi import MidiInput
-            midi_input = MidiInput(trigger_key)
+            note_map = {int(k): v for k, v in cfg.get("midi", {}).get("notes", {}).items()}
+            midi_input = MidiInput(
+                lambda ch: trigger_key(ch, "midi"),
+                device=cfg["midi"].get("device", "default"),
+                note_map=note_map or None,
+            )
             midi_input.start()
             print(f"[daemon] MIDI: listening on '{cfg['midi'].get('device', 'default')}'")
         except ImportError:
@@ -72,33 +98,18 @@ def run_daemon(engine, keys, cfg, serial_port=None, udp_port=None):
     signal.signal(signal.SIGINT, handle_sig)
     signal.signal(signal.SIGTERM, handle_sig)
 
-    # Auto-mute timeout
-    auto_mute_secs = cfg.get("global", {}).get("auto_mute_secs", 0)
-    last_activity = [time.time()]
-
-    def touch():
-        last_activity[0] = time.time()
-
-    original_trigger = trigger_key
-    def trigger_with_touch(ch):
-        touch()
-        original_trigger(ch)
-
     print("[daemon] Waiting for input... (Ctrl+C to stop)")
 
     try:
         while running[0]:
-            if auto_mute_secs > 0 and engine.global_volume > 0:
-                if time.time() - last_activity[0] > auto_mute_secs:
-                    engine.global_volume = 0.0
-                    print(f"[daemon] Auto-mute after {auto_mute_secs}s idle")
             time.sleep(0.2)
     except KeyboardInterrupt:
         pass
 
     print("[daemon] Stopping...")
     engine.stop_all()
-    web.stop()
+    if web:
+        web.stop()
     if serial_input:
         serial_input.stop()
     if udp_input:

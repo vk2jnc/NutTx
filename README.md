@@ -1,5 +1,7 @@
 # NutTx
 
+![NutTx mascot](images/nuttx-logo.jpg)
+
 Portable soundboard for ham radio & streaming. Squeaks out signals.
 
 A terminal-based soundboard that pipes audio to **any** output device —
@@ -10,6 +12,9 @@ and more.
 ## Quick Start
 
 ```bash
+# Create your local config (gitignored - devices, binds & endpoints stay local)
+cp config.example.toml config.toml
+
 pip install -r requirements.txt
 
 # List audio devices
@@ -33,22 +38,28 @@ python main.py --test sounds/cQ.wav
 - **MIDI input** — USB keyboard/controller triggers
 - **Web UI + HTTP API** — trigger from phone, tablet, browser
 - **Tone generator** — CW, Morse, beeps, DTMF, SID tones, ARPTone
+- **TTS** — speak any text via an OpenAI-compatible endpoint (CLI, web, API)
 - **Sequencer** — play sound chains in order
 - **Loop mode** — loop any sound indefinitely
-- **Fade in/out** — clean audio transitions
+- **Fade in/out** — clean audio transitions (`--play --fade-in/--fade-out`)
 - **Recording** — capture mic input as a new sound
 - **Sound banks** — switch between radio/streaming/generic presets
 - **Panic button** — instant hard-stop of all audio
-- **Ducking** — reduce volume for priority sounds
+- **Ducking** — reduce volume for priority sounds (`d`/`u` keys, `/api/duck`)
 - **Auto-mute** — silence after idle timeout
 - **Daemon mode** — headless, runs in background
-- **Logging** — timestamped playback history
+- **Logging** — timestamped playback history (`--log-file`, `[log]` config)
 - **3D-printable button pad** — design spec included
 - **Systemd service** — auto-start on boot
 
 ## Configuration
 
-Edit `config.toml`:
+`config.toml` is **gitignored** — copy the template and edit freely,
+your devices, key bindings and TTS endpoint never get committed:
+
+```bash
+cp config.example.toml config.toml
+```
 
 ```toml
 [device]
@@ -61,7 +72,6 @@ channels = 1
 
 [global]
 volume = 0.8
-auto_mute_secs = 0
 
 [keys]
 "1" = "cQ.wav"
@@ -72,9 +82,18 @@ auto_mute_secs = 0
 enabled = true
 port = 8347
 
+[tts]
+enabled = false
+base_url = ""          # e.g. "https://your-tts-host/v1"
+key_env = "NUTTX_TTS_API_KEY"
+model = "tts-1"
+voice = "alloy"
+
 [safety]
 duck_level = 0.1
 duck_release_ms = 200
+# Auto-mute after N seconds idle (0 = disabled)
+auto_mute_secs = 0
 
 [midi]
 enabled = false
@@ -91,6 +110,8 @@ device = "default"
 |-----|--------|
 | 1-0 | Play bound sound |
 | m   | Mute / unmute |
+| d   | Duck (lower volume for priority sounds) |
+| u   | Unduck (restore volume) |
 | l   | Reload sounds from disk |
 | q   | Quit |
 
@@ -149,9 +170,59 @@ curl -X POST http://localhost:8347/api/mute
 # Panic (stop all)
 curl -X POST http://localhost:8347/api/panic
 
+# Duck / unduck (priority sounds)
+curl -X POST http://localhost:8347/api/duck -d '{"duck":true}'
+curl -X POST http://localhost:8347/api/duck -d '{"duck":false}'
+
+# TTS status / speak
+curl http://localhost:8347/api/tts
+curl -X POST http://localhost:8347/api/tts -d '{"text":"Break break break"}'
+
 # Status
 curl http://localhost:8347/api/status
 ```
+
+## Text-to-Speech (TTS)
+
+Synthesizes text with **any OpenAI-compatible `/audio/speech` endpoint**
+and plays the clip through the same output path as the soundbank. Uses
+stdlib `urllib` only — no new dependencies.
+
+Nothing is hardcoded. Set the endpoint, model and voice in `[tts]`, or
+override any of them with environment variables (env wins over config):
+
+| Setting | `[tts]` config key | Env override |
+|---------|--------------------|--------------|
+| Enable | `enabled` | `NUTTX_TTS_ENABLED=1` |
+| Endpoint | `base_url` | `NUTTX_TTS_BASE_URL` |
+| Key variable name | `key_env` | `NUTTX_TTS_KEY_ENV` |
+| API key | — (env only) | `NUTTX_TTS_API_KEY` (default `key_env`) |
+| Model | `model` | `NUTTX_TTS_MODEL` |
+| Voice | `voice` | `NUTTX_TTS_VOICE` |
+
+The API key is **never stored in config files** — it's only ever read
+from the environment at request time:
+
+```bash
+# Option A: pure environment (no config.toml [tts] edits needed)
+export NUTTX_TTS_ENABLED=1
+export NUTTX_TTS_BASE_URL="https://your-tts-host/v1"
+export NUTTX_TTS_API_KEY="sk-..."
+export NUTTX_TTS_VOICE="nova"
+
+# Option B: config.toml [tts] section + key env var
+export NUTTX_TTS_API_KEY="sk-..."
+
+# CLI
+python main.py --speak "Break break break, station VK2JNC"
+
+# Web UI: the "Say It" panel, or:
+curl -X POST http://localhost:8347/api/tts -d '{"text":"CQ CQ CQ"}'
+curl http://localhost:8347/api/tts   # status (host/model/voice, key masked)
+```
+
+Other `[tts]` options: `cache_dir` (optional: persist generated MP3s),
+`max_text_chars`, `request_timeout`.
 
 ## Tone Generator
 
@@ -186,6 +257,9 @@ python main.py --seq check_in
 
 # Loop a sound (Ctrl+C to stop)
 python main.py --loop alert.wav
+
+# Play a loaded sound with fade in/out
+python main.py --play sgc-offworld-alarm --fade-in 0.2 --fade-out 0.5
 ```
 
 ## Recording
@@ -267,7 +341,8 @@ Drop audio files in `sounds/`. Referenced by filename stem in config.
 ```
 NutTx/
 ├── main.py               # Entry point
-├── config.toml           # Configuration
+├── config.example.toml   # Config template (copy to config.toml; gitignored)
+├── images/               # Branding (mascot)
 ├── pyproject.toml        # Package definition
 ├── requirements.txt
 ├── soundboard/
@@ -277,6 +352,7 @@ NutTx/
 │   ├── ui.py             # Curses TUI
 │   ├── daemon.py         # Headless daemon mode
 │   ├── web.py            # Web UI + HTTP API
+│   ├── tts.py            # Text-to-speech (OpenAI-compatible)
 │   ├── tones.py          # Tone/CW/Morse/DTMF generator
 │   ├── sequencer.py      # Sequences, loops, recording
 │   ├── midi.py           # MIDI input

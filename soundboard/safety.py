@@ -27,8 +27,11 @@ class Safety:
         print("[safety] PANIC - all audio stopped, muted")
 
     def duck(self) -> None:
-        """Lower volume to duck_level (for priority sounds)."""
-        if not self._ducked:
+        """Lower volume to duck_level (for priority sounds).
+
+        No-op while muted so ducking can't accidentally unmute.
+        """
+        if not self._ducked and not self._muted and self.engine.global_volume > 0:
             self.engine.global_volume = self._duck_level
             self._ducked = True
 

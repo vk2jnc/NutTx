@@ -1,67 +1,65 @@
 """Curses-based TUI for NutTx."""
 
 import curses
-import threading
 from .engine import Engine
+from .safety import Safety
 
 
 class TUI:
-    """Terminal UI: shows sound list, key bindings, and playback status."""
+    """Terminal UI: shows sound list, key bindings, and playback status.
 
-    def __init__(self, engine: Engine, keys: dict, cfg: dict):
+    All key handling happens in the main curses loop -- there is no
+    separate stdin reader, so hotkeys and UI keys can't race.
+    """
+
+    def __init__(self, engine: Engine, keys: dict, cfg: dict,
+                 playlog=None, safety: Safety | None = None):
         self.engine = engine
         self.keys = keys
         self.cfg = cfg
+        self.playlog = playlog
+        self.safety = safety or Safety(engine, cfg)
         self._running = False
-        self._key_thread: threading.Thread | None = None
 
     def run(self) -> None:
+        setup_colors()
+        self.safety.start_watchdog()
         self._running = True
         curses.wrapper(self._main_loop)
+        self.engine.stop_all()
 
     def _main_loop(self, stdscr) -> None:
         curses.curs_set(0)
         stdscr.nodelay(True)
         stdscr.keypad(True)
 
-        # Start background key listener
-        self._key_thread = threading.Thread(target=self._key_listener, daemon=True)
-        self._key_thread.start()
-
         while self._running:
             self._draw(stdscr)
             ch = stdscr.getch()
-            if ch == ord("q"):
+            if ch == -1:
+                continue  # nothing typed
+            c = chr(ch) if 32 <= ch < 127 else ""
+            if c == "q":
                 self._running = False
-            elif ch == ord("l"):
+            elif c == "l":
                 self.engine._load_all()
-            elif ch == ord("m"):
+            elif c == "m":
                 # Mute toggle: flip global volume
-                self.engine.global_volume = 0.0 if self.engine.global_volume > 0 else \
-                    self.cfg["global"].get("volume", 0.8)
-
-        self.engine.stop_all()
-
-    def _key_listener(self) -> None:
-        """Background thread that reads stdin for hotkeys (non-blocking via termios)."""
-        import termios
-        import tty
-        import select
-        import sys
-
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
-            while self._running:
-                ready, _, _ = select.select([fd], [], [], 0.05)
-                if ready:
-                    ch = sys.stdin.read(1)
-                    if ch in self.keys:
-                        sound_name = self.keys[ch]
-                        self.engine.play(sound_name)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                if self.safety.is_muted():
+                    self.safety.unmute()
+                else:
+                    self.engine.global_volume = 0.0
+                    self.safety.touch()
+            elif c == "d":
+                self.safety.duck()
+            elif c == "u":
+                self.safety.unduck()
+            elif c in self.keys:
+                sound_name = self.keys[c]
+                ok = self.engine.play(sound_name)
+                self.safety.touch()
+                if self.playlog:
+                    self.playlog.record(c, sound_name, "keyboard", ok)
 
     def _draw(self, stdscr) -> None:
         stdscr.erase()
@@ -104,7 +102,7 @@ class TUI:
             y += 1
 
         # Footer / help
-        footer = " [1-0] play  [m] mute  [l] reload  [q] quit"
+        footer = " [1-0] play  [m] mute  [d] duck  [u] unduck  [l] reload  [q] quit"
         try:
             stdscr.addstr(h - 1, 0, footer[:w - 1], curses.A_DIM)
         except curses.error:

@@ -69,7 +69,7 @@ void setup() {
     digitalWrite(LED_PIN, HIGH);  // steady = connected
 
     udp.begin(TARGET_PORT);
-    connected = true
+    connected = true;
     Serial.printf("Connected to WiFi. Sending to %s:%d\n", TARGET_IP, TARGET_PORT);
 }
 

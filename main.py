@@ -27,6 +27,7 @@ def main():
     parser.add_argument("--no-preload", action="store_true", help="Don't preload sounds into RAM")
     parser.add_argument("-v", "--volume", type=float, help="Override global volume (0.0-1.0)")
     parser.add_argument("--test", metavar="FILE", help="Play a specific sound file and exit")
+    parser.add_argument("--speak", metavar="TEXT", help="Synthesize text-to-speech and play through the output device")
     parser.add_argument("--serial", metavar="PORT", help="Listen on serial port (e.g. /dev/ttyACM0)")
     parser.add_argument("--udp", metavar="PORT", type=int, help="Listen on UDP port for ESP32 WiFi")
 
@@ -47,6 +48,11 @@ def main():
     parser.add_argument("--record", metavar="NAME", help="Record a sound (Ctrl+C to stop)")
     parser.add_argument("--record-dur", type=float, help="Record duration in seconds")
     parser.add_argument("--input-device", help="Input device for recording (name or index)")
+
+    # Fade playback
+    parser.add_argument("--play", metavar="NAME", help="Play a loaded sound by name")
+    parser.add_argument("--fade-in", type=float, default=0.0, help="Fade-in seconds (with --play)")
+    parser.add_argument("--fade-out", type=float, default=0.0, help="Fade-out seconds (with --play)")
 
     # Banks
     parser.add_argument("--bank", metavar="NAME", help="Load a sound bank")
@@ -122,11 +128,34 @@ def main():
 
     keys = cfg.get("keys", {})
 
+    # Playback log (in-memory ring buffer + optional JSON-lines file)
+    log_cfg = cfg.get("log", {})
+    playlog = PlayLog(
+        log_file=args.log_file or log_cfg.get("file") or None,
+        maxlen=int(log_cfg.get("maxlen", 500)),
+    )
+
     # --- Subcommands that don't need the TUI ---
 
     if args.test:
         engine.play_file(args.test)
         print(f"Played: {args.test}")
+        sys.exit(0)
+
+    # Text-to-speech
+    if args.speak:
+        from soundboard.tts import TTSClient
+        tts = TTSClient(cfg)
+        if not tts.available():
+            print(f"TTS not available: {tts.status()}")
+            print(f"  Set the env var: export {tts.key_env}=...")
+            sys.exit(1)
+        try:
+            print(f"Synthesizing: {args.speak!r}")
+            tts.speak(args.speak, engine, blocking=True)
+        except Exception as e:
+            print(f"TTS failed: {e}")
+            sys.exit(1)
         sys.exit(0)
 
     # Tone generation
@@ -193,36 +222,69 @@ def main():
         rec.record(args.record, duration=args.record_dur)
         sys.exit(0)
 
+    # Play a loaded sound with fade in/out
+    if args.play:
+        seq = Sequencer(engine)
+        seq.fade_play(args.play,
+                      fade_in=args.fade_in,
+                      fade_out=args.fade_out,
+                      blocking=True)
+        sys.exit(0)
+
     # --- Main modes ---
 
     if args.daemon:
         from soundboard.daemon import run_daemon
         cfg["_config_path"] = args.config
+        if args.no_web:
+            cfg.setdefault("web", {})["enabled"] = False
         run_daemon(engine, keys, cfg,
                    serial_port=args.serial,
-                   udp_port=args.udp if args.udp is not None else
-                   (cfg.get("web", {}).get("udp_port") if not args.no_web else None))
+                   udp_port=args.udp,
+                   web_port=args.web_port,
+                   playlog=playlog)
     else:
         # Interactive TUI mode (optionally with external inputs)
-        def trigger_key(ch: str):
+        safety = Safety(engine, cfg)
+
+        def trigger_key(ch: str, source: str = "keyboard"):
+            safety.touch()
             if ch == "m":
-                vol = cfg["global"].get("volume", 0.8)
-                engine.global_volume = 0.0 if engine.global_volume > 0 else vol
+                if safety.is_muted():
+                    safety.unmute()
+                else:
+                    engine.global_volume = 0.0
             elif ch in keys:
-                engine.play(keys[ch])
+                ok = engine.play(keys[ch])
+                playlog.record(ch, keys[ch], source, ok)
 
         serial_input = None
         udp_input = None
 
         if args.serial:
             from soundboard.serial_input import SerialInput
-            serial_input = SerialInput(args.serial, trigger_key)
+            serial_input = SerialInput(args.serial, lambda ch: trigger_key(ch, "serial"))
             serial_input.start()
 
         if args.udp is not None:
             from soundboard.udp_input import UDPInput
-            udp_input = UDPInput(args.udp, trigger_key)
+            udp_input = UDPInput(args.udp, lambda ch: trigger_key(ch, "udp"))
             udp_input.start()
+
+        # MIDI input (interactive mode too)
+        midi_input = None
+        if cfg.get("midi", {}).get("enabled", False):
+            try:
+                from soundboard.midi import MidiInput
+                note_map = {int(k): v for k, v in cfg.get("midi", {}).get("notes", {}).items()}
+                midi_input = MidiInput(
+                    lambda ch: trigger_key(ch, "midi"),
+                    device=cfg["midi"].get("device", "default"),
+                    note_map=note_map or None,
+                )
+                midi_input.start()
+            except ImportError:
+                print("MIDI: python-rtmidi not installed, skipping")
 
         # Web UI in interactive mode too
         if not args.no_web and cfg.get("web", {}).get("enabled", True):
@@ -230,19 +292,22 @@ def main():
             web = WebServer(engine, keys, cfg,
                             host=cfg.get("web", {}).get("host", "0.0.0.0"),
                             port=args.web_port or cfg.get("web", {}).get("port", 8347),
-                            config_path=args.config)
+                            config_path=args.config,
+                            playlog=playlog, safety=safety)
             web.start()
             print(f"Web UI: http://localhost:{web.port}")
         else:
             web = None
 
-        tui = TUI(engine, keys, cfg)
+        tui = TUI(engine, keys, cfg, playlog=playlog, safety=safety)
         tui.run()
 
         if serial_input:
             serial_input.stop()
         if udp_input:
             udp_input.stop()
+        if midi_input:
+            midi_input.stop()
         if web:
             web.stop()
 

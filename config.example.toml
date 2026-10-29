@@ -1,0 +1,91 @@
+# NutTx configuration template.
+# Copy to config.toml and edit - config.toml is gitignored, so your
+# devices, key bindings and TTS endpoint stay local:
+#   cp config.example.toml config.toml
+
+[device]
+# Name or index of the output device
+# Run with --list-devices to see options
+name = ""
+# e.g. name = "NVidia HDMI 0"
+# e.g. name = "PipeWire - Monitor Sink"
+
+[engine]
+# Preload all sounds into RAM (recommended for zero-latency)
+preload = true
+# Sample rate to resample to (0 = use device native rate)
+sample_rate = 0
+# Channels (1 = mono for radio, 2 = stereo for streaming)
+channels = 1
+
+[global]
+# Global volume multiplier (0.0 - 1.0)
+volume = 0.8
+
+# Key bindings: key -> sound filename (filename stem works too)
+[keys]
+# "1" = "cQ"
+# "2" = "73"
+
+[overrides]
+# Per-sound volume multipliers
+# "alert" = 1.0
+# "key_click" = 0.5
+
+# Web UI / HTTP API
+[web]
+enabled = true
+host = "0.0.0.0"
+port = 8347
+
+# Text-to-speech (any OpenAI-compatible /audio/speech endpoint).
+# Every value can be overridden by env vars (env wins):
+#   NUTTX_TTS_ENABLED, NUTTX_TTS_BASE_URL, NUTTX_TTS_KEY_ENV,
+#   NUTTX_TTS_API_KEY, NUTTX_TTS_MODEL, NUTTX_TTS_VOICE
+[tts]
+enabled = false
+# Base URL of the endpoint (no trailing slash), e.g. "https://your-tts-host/v1"
+base_url = ""
+# API key is read from THIS environment variable -- never stored here.
+# Default: NUTTX_TTS_API_KEY
+key_env = "NUTTX_TTS_API_KEY"
+model = "tts-1"
+voice = "alloy"
+# Optional dir to persist generated clips ("" = in-memory only)
+cache_dir = ""
+# Safety caps
+max_text_chars = 500
+request_timeout = 30
+
+# Safety features
+[safety]
+# Duck volume to this level when ducking (for priority sounds)
+duck_level = 0.1
+# Time (ms) before volume restores after duck
+duck_release_ms = 200
+# Auto-mute after N seconds idle (0 = disabled). Trigger duck with 'd',
+# restore with 'u' (TUI/ESP32), or POST /api/duck {"duck": true|false}
+auto_mute_secs = 0
+
+# MIDI input
+[midi]
+enabled = false
+# Device name or index ("default" = first available)
+device = "default"
+# Custom note->key mapping (MIDI note number as string)
+# [midi.notes]
+# "60" = "1"
+# "61" = "2"
+# "72" = "m"
+
+# Sound sequences (trigger with --seq NAME)
+[sequences]
+# "check_in" = ["cQ", "id"]
+# "call_sign" = ["alert", "id", "73"]
+
+# Logging
+[log]
+# File to append playback log (JSON lines). Empty = no file logging.
+file = ""
+# Max in-memory entries
+maxlen = 500
