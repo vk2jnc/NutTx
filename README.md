@@ -1,5 +1,7 @@
 # NutTx
 
+![NutTx mascot](images/nuttx-logo.jpg)
+
 Portable soundboard for ham radio & streaming. Squeaks out signals.
 
 A terminal-based soundboard that pipes audio to **any** output device —
@@ -340,6 +342,7 @@ Drop audio files in `sounds/`. Referenced by filename stem in config.
 NutTx/
 ├── main.py               # Entry point
 ├── config.example.toml   # Config template (copy to config.toml; gitignored)
+├── images/               # Branding (mascot)
 ├── pyproject.toml        # Package definition
 ├── requirements.txt
 ├── soundboard/
