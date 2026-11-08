@@ -67,6 +67,21 @@ duck_release_ms = 200
 # restore with 'u' (TUI/ESP32), or POST /api/duck {"duck": true|false}
 auto_mute_secs = 0
 
+# Radio / PTT control via rigctld (FLRig on Windows, hamlib rigctld on Linux).
+# Everything can also be set live from the web UI "Radio / PTT" panel.
+[radio]
+enabled = false
+# Host running FLRig (Rig Control) or rigctld
+host = "127.0.0.1"
+# rigctld TCP port (FLRig default is 4532)
+port = 4532
+# Key the radio while sounds are playing
+ptt_on_play = true
+# Key PTT this many ms BEFORE audio starts
+ptt_pre_ms = 50
+# Release PTT this many ms AFTER audio ends
+ptt_post_ms = 150
+
 # MIDI input
 [midi]
 enabled = false

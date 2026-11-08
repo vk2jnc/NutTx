@@ -18,6 +18,15 @@ def run_daemon(engine, keys, cfg, serial_port=None, udp_port=None,
     safety = Safety(engine, cfg)
     safety.start_watchdog()
 
+    # Radio / PTT (rigctld - FLRig or hamlib). Always created so the web
+    # UI can enable it live; only connects when [radio] enabled.
+    from soundboard.radio import setup_radio
+    rig = setup_radio(cfg, engine)
+    if cfg.get("radio", {}).get("enabled", False):
+        print(f"[daemon] Radio: {rig.host}:{rig.port} (PTT on playback: {rig.ptt_on_play})")
+    else:
+        print("[daemon] Radio: disabled (enable via web UI or [radio] config)")
+
     print("[daemon] NutTx daemon started")
     print(f"[daemon] Device: {engine.device}, Rate: {engine.sample_rate} Hz, "
           f"Ch: {engine.channels}, Vol: {engine.global_volume}")
@@ -66,7 +75,7 @@ def run_daemon(engine, keys, cfg, serial_port=None, udp_port=None,
         web = WebServer(engine, keys, cfg, host=cfg.get("web", {}).get("host", "0.0.0.0"),
                         port=web_port or cfg.get("web", {}).get("port", 8347),
                         config_path=cfg.get("_config_path", "config.toml"),
-                        playlog=playlog, safety=safety)
+                        playlog=playlog, safety=safety, radio=rig)
         web.start()
         print(f"[daemon] Web UI: http://0.0.0.0:{web.port}")
     else:
@@ -108,6 +117,7 @@ def run_daemon(engine, keys, cfg, serial_port=None, udp_port=None,
 
     print("[daemon] Stopping...")
     engine.stop_all()
+    rig.stop()
     if web:
         web.stop()
     if serial_input:

@@ -39,6 +39,7 @@ python main.py --test sounds/cQ.wav
 - **Web UI + HTTP API** — trigger from phone, tablet, browser
 - **Tone generator** — CW, Morse, beeps, DTMF, SID tones, ARPTone
 - **TTS** — speak any text via an OpenAI-compatible endpoint (CLI, web, API)
+- **Radio PTT** — key your radio via FLRig/hamlib (rigctld); PTT follows playback, live status in the web UI
 - **Sequencer** — play sound chains in order
 - **Loop mode** — loop any sound indefinitely
 - **Fade in/out** — clean audio transitions (`--play --fade-in/--fade-out`)
@@ -94,6 +95,14 @@ duck_level = 0.1
 duck_release_ms = 200
 # Auto-mute after N seconds idle (0 = disabled)
 auto_mute_secs = 0
+
+[radio]
+enabled = false
+host = "127.0.0.1"
+port = 4532
+ptt_on_play = true
+ptt_pre_ms = 50
+ptt_post_ms = 150
 
 [midi]
 enabled = false
@@ -319,6 +328,32 @@ sudo systemctl enable --now nuttx
 4. `channels = 1` for mono
 5. Run and go
 
+### PTT control (FLRig / hamlib)
+
+If your radio needs PTT to open the mic, NutTx can key it for you via the
+standard **rigctld** protocol — the same one **FLRig** (Windows) and
+**rigctld** (Linux/hamlib) both speak. No new dependencies.
+
+**Setup is all in the web UI** — open the **Radio / PTT** panel, enter the
+host/port, hit **Test**, tick **Enable**:
+
+1. **Windows + FLRig:** install FLRig, connect your radio, and tick
+   *Rig Control (rigctld)* in FLRig's settings (default port **4532**).
+2. **Linux + hamlib:** run `rigctld -m <model> -d /dev/ttyUSB0`
+   (`rigctld -l` lists models). A ready-made unit is in
+   `systemd/rigctld.service` — edit the model/device line, then
+   `systemctl enable --now rigctld`.
+3. In NutTx's web UI: **Radio / PTT** panel → host/port → **Test**
+   (shows e.g. `OK: Yaesu FT-991A · 145.500 MHz · FM`) → tick **Enable**.
+
+With **Key PTT on playback** on, every sound (soundbank, TTS, tones) keys
+the radio ~50 ms before the audio and releases ~150 ms after (both
+adjustable in the panel). Overlapping sounds hold PTT until the last one
+finishes; a muted NutTx never keys. The panel also shows live PTT state,
+frequency and mode, and has a manual **PTT** button for testing the link.
+
+CLI overrides: `--radio-host`, `--radio-port`, `--no-radio`.
+
 ## Using for Streaming (OBS)
 
 ```bash
@@ -353,6 +388,7 @@ NutTx/
 │   ├── daemon.py         # Headless daemon mode
 │   ├── web.py            # Web UI + HTTP API
 │   ├── tts.py            # Text-to-speech (OpenAI-compatible)
+│   ├── radio.py          # Radio PTT via rigctld (FLRig/hamlib)
 │   ├── tones.py          # Tone/CW/Morse/DTMF generator
 │   ├── sequencer.py      # Sequences, loops, recording
 │   ├── midi.py           # MIDI input
@@ -369,7 +405,8 @@ NutTx/
 │   ├── button_pad.md     # 3D print design spec
 │   └── gen_pad.py        # STL generator script
 ├── systemd/
-│   └── nuttx.service     # Systemd unit
+│   ├── nuttx.service     # Systemd unit
+│   └── rigctld.service   # hamlib rigctld unit (for PTT)
 ├── banks/                # Sound bank presets
 └── sounds/               # Your audio files
 ```

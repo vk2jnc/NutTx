@@ -23,6 +23,7 @@ class NutTxHandler(BaseHTTPRequestHandler):
     cfg = None
     playlog: PlayLog | None = None
     safety: Safety | None = None
+    radio = None  # RigClient (soundboard.radio)
 
     def log_message(self, format, *args):
         pass  # suppress request logging
@@ -84,6 +85,9 @@ class NutTxHandler(BaseHTTPRequestHandler):
             self._json(200, {"status": "ok", "uptime": time.time()})
         elif path == "/api/tts":
             self._json(200, {"tts": self.tts.status() if self.tts else "disabled"})
+        elif path == "/api/radio":
+            self._json(200, self.radio.status() if self.radio else
+                       {"enabled": False, "connected": False})
         else:
             self._json(404, {"error": "not found"})
 
@@ -192,6 +196,37 @@ class NutTxHandler(BaseHTTPRequestHandler):
                 self.playlog.record("tts", text[:40] or "-", "web", ok)
             self._json(200, {"ok": ok, "text": text})
 
+        elif path == "/api/radio":
+            data = json.loads(body) if body else {}
+            if self.radio is None:
+                self._json(400, {"error": "radio not available"})
+                return
+            keys_in = ("host", "port", "enabled", "ptt_on_play", "ptt_pre_ms", "ptt_post_ms")
+            self.radio.reconfigure(**{k: data[k] for k in keys_in if k in data})
+            self._save_radio()
+            self._json(200, self.radio.status())
+
+        elif path == "/api/radio/test":
+            if self.radio is None:
+                self._json(400, {"error": "radio not available"})
+                return
+            self._json(200, self.radio.test())
+
+        elif path == "/api/radio/ptt":
+            data = json.loads(body) if body else {}
+            if self.radio is None:
+                self._json(400, {"error": "radio not available"})
+                return
+            if "on" in data:
+                if bool(data["on"]) != self.radio._manual_ptt:
+                    self.radio.ptt_toggle()
+            else:
+                self.radio.ptt_toggle()
+            self._json(200, self.radio.status())
+
+        else:
+            self._json(404, {"error": "not found"})
+
     def _save_keys(self) -> None:
         """Write current key bindings back to config.toml [keys] section."""
         config_path = getattr(self, 'config_path', None)
@@ -221,8 +256,44 @@ class NutTxHandler(BaseHTTPRequestHandler):
         except Exception as e:
             print(f"[web] Failed to save keys: {e}")
 
-        else:
-            self._json(404, {"error": "not found"})
+    def _save_radio(self) -> None:
+        """Write current radio settings back to config.toml [radio] section."""
+        config_path = getattr(self, 'config_path', None)
+        if not config_path or self.radio is None:
+            return
+        r = self.radio
+        new_lines = [
+            f'enabled = {str(r.enabled).lower()}',
+            f'host = "{r.host}"',
+            f'port = {r.port}',
+            f'ptt_on_play = {str(r.ptt_on_play).lower()}',
+            f'ptt_pre_ms = {r.ptt_pre_ms}',
+            f'ptt_post_ms = {r.ptt_post_ms}',
+        ]
+        try:
+            content = Path(config_path).read_text()
+            lines = content.split('\n')
+            start = None
+            end = None
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped == '[radio]':
+                    start = i + 1
+                elif start is not None and stripped.startswith('['):
+                    end = i
+                    break
+            if start is None:
+                # No [radio] section yet - append one
+                while lines and lines[-1].strip() == '':
+                    lines.pop()
+                lines += ['', '# Radio / PTT (rigctld - FLRig or hamlib)', '[radio]'] + new_lines
+            else:
+                if end is None:
+                    end = len(lines)
+                lines[start:end] = new_lines
+            Path(config_path).write_text('\n'.join(lines))
+        except Exception as e:
+            print(f"[web] Failed to save radio config: {e}")
 
     def _handle_upload(self, raw: bytes, content_len: int) -> None:
         content_type = self.headers.get("Content-Type", "")
@@ -889,6 +960,20 @@ h1 {{
       .tts-badge {{ margin-left: 8px; font-size: 0.65rem; color: var(--text-dim); text-transform: lowercase; }}
       .tts-msg {{ margin-top: 8px; font-size: 0.75rem; color: var(--text-dim); min-height: 1em; }}
       .tts-msg.err {{ color: var(--red); }}
+      .radio-row {{ display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }}
+      .radio-host {{ flex: 1; min-width: 120px; }}
+      .radio-port {{ width: 84px; }}
+      .radio-ms {{ width: 64px; }}
+      .radio-check {{ font-size: 0.8rem; color: var(--text); display: flex; align-items: center; gap: 5px; cursor: pointer; }}
+      .radio-label {{ font-size: 0.78rem; color: var(--text-dim); display: flex; align-items: center; gap: 4px; }}
+      .radio-ptt-btn {{
+        padding: 8px 18px; border-radius: 8px; border: 1px solid var(--red);
+        background: transparent; color: var(--red); font-weight: 700;
+        cursor: pointer; font-family: inherit; letter-spacing: 1px;
+      }}
+      .radio-ptt-btn.keyed {{ background: var(--red); color: #fff; box-shadow: 0 0 14px var(--red); }}
+      .radio-detail {{ margin-top: 8px; font-size: 0.75rem; color: var(--text-dim); }}
+      #radioStatus.tx {{ color: var(--red); font-weight: 700; }}
     </style>
     <div class="panel" id="ttsPanel">
         <div class="panel-title">&#127908; Say It <span id="ttsStatus" class="tts-badge">checking...</span></div>
@@ -908,6 +993,27 @@ h1 {{
             </select>
             <span class="device-name" id="deviceName">loading...</span>
         </div>
+    </div>
+
+    <!-- Radio / PTT (rigctld: FLRig or hamlib) -->
+    <div class="panel" id="radioPanel">
+        <div class="panel-title">&#128226; Radio / PTT <span id="radioStatus" class="tts-badge">off</span></div>
+        <div class="radio-row">
+            <input type="text" id="radioHost" class="tts-input radio-host" placeholder="rigctld host" value="127.0.0.1">
+            <input type="number" id="radioPort" class="tts-input radio-port" placeholder="4532" value="4532">
+            <button class="btn tts-btn" id="radioTestBtn" onclick="radioTest()">Test</button>
+        </div>
+        <div class="radio-row">
+            <label class="radio-check"><input type="checkbox" id="radioEnabled" onchange="radioSave()"> Enable</label>
+            <label class="radio-check"><input type="checkbox" id="radioPttOnPlay" onchange="radioSave()"> Key PTT on playback</label>
+        </div>
+        <div class="radio-row">
+            <label class="radio-label">Pre <input type="number" id="radioPreMs" class="tts-input radio-ms" value="50" onchange="radioSave()"> ms</label>
+            <label class="radio-label">Post <input type="number" id="radioPostMs" class="tts-input radio-ms" value="150" onchange="radioSave()"> ms</label>
+            <button class="radio-ptt-btn" id="radioPttBtn" onclick="radioPtt()">PTT</button>
+        </div>
+        <div class="radio-detail" id="radioDetail">not connected</div>
+        <div class="tts-msg" id="radioMsg"></div>
     </div>
 
     <!-- Upload zone -->
@@ -1081,6 +1187,85 @@ function loadTtsStatus() {{
 }}
 loadTtsStatus();
 
+// Radio / PTT (rigctld: FLRig or hamlib)
+function radioRender(d) {{
+  const badge = document.getElementById('radioStatus');
+  const detail = document.getElementById('radioDetail');
+  const pttBtn = document.getElementById('radioPttBtn');
+  pttBtn.classList.toggle('keyed', !!(d.manual_ptt || d.ptt));
+  if(!d.enabled) {{
+    badge.className = 'tts-badge'; badge.textContent = 'off';
+    detail.textContent = 'disabled \u2014 tick Enable to connect';
+    return;
+  }}
+  if(!d.connected) {{
+    badge.className = 'tts-badge'; badge.textContent = 'connecting';
+    detail.textContent = d.error ? ('error: ' + d.error) : 'connecting...';
+    return;
+  }}
+  badge.className = 'tts-badge' + (d.ptt ? ' tx' : '');
+  badge.textContent = d.ptt ? 'TX' : 'RX';
+  let s = d.info || 'connected';
+  if(d.freq) s += ' \u00b7 ' + d.freq;
+  if(d.mode) s += ' \u00b7 ' + d.mode;
+  if(d.ptt_refs > 0) s += ' \u00b7 PTT held by playback';
+  detail.textContent = s;
+}}
+function radioInit() {{
+  fetch('/api/radio').then(r=>r.json()).then(d=>{{
+    document.getElementById('radioHost').value = d.host || '127.0.0.1';
+    document.getElementById('radioPort').value = d.port || 4532;
+    document.getElementById('radioEnabled').checked = !!d.enabled;
+    document.getElementById('radioPttOnPlay').checked = d.ptt_on_play !== false;
+    document.getElementById('radioPreMs').value = (d.ptt_pre_ms != null) ? d.ptt_pre_ms : 50;
+    document.getElementById('radioPostMs').value = (d.ptt_post_ms != null) ? d.ptt_post_ms : 150;
+    radioRender(d);
+  }}).catch(()=>{{}});
+}}
+function radioPoll() {{
+  fetch('/api/radio').then(r=>r.json()).then(radioRender).catch(()=>{{}});
+}}
+function radioSave() {{
+  const payload = {{
+    host: document.getElementById('radioHost').value.trim() || '127.0.0.1',
+    port: parseInt(document.getElementById('radioPort').value) || 4532,
+    enabled: document.getElementById('radioEnabled').checked,
+    ptt_on_play: document.getElementById('radioPttOnPlay').checked,
+    ptt_pre_ms: parseInt(document.getElementById('radioPreMs').value) || 0,
+    ptt_post_ms: parseInt(document.getElementById('radioPostMs').value) || 0,
+  }};
+  fetch('/api/radio', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body: JSON.stringify(payload)}})
+  .then(r=>r.json()).then(radioRender).catch(e=>{{
+    const msg = document.getElementById('radioMsg');
+    msg.className = 'tts-msg err'; msg.textContent = 'save failed: ' + e;
+  }});
+}}
+function radioTest() {{
+  const msg = document.getElementById('radioMsg');
+  msg.className = 'tts-msg'; msg.textContent = 'Testing...';
+  radioSave();  // apply host/port first
+  setTimeout(()=>{{
+    fetch('/api/radio/test', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:'{{}}'}})
+    .then(r=>r.json()).then(d=>{{
+      if(d.ok) {{
+        msg.textContent = 'OK: ' + (d.info || 'rig responded')
+          + (d.freq ? ' \u00b7 ' + d.freq : '') + (d.mode ? ' \u00b7 ' + d.mode : '');
+      }} else {{
+        msg.className = 'tts-msg err';
+        msg.textContent = d.error + (d.hint ? ' \u2014 ' + d.hint : '');
+      }}
+    }}).catch(e=>{{
+      msg.className = 'tts-msg err'; msg.textContent = 'test failed: ' + e;
+    }});
+  }}, 400);
+}}
+function radioPtt() {{
+  fetch('/api/radio/ptt', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:'{{}}'}})
+  .then(r=>r.json()).then(radioRender).catch(()=>{{}});
+}}
+radioInit();
+setInterval(radioPoll, 1500);
+
 // File upload
 function uploadFiles(files) {{
   if(!files || files.length === 0) return;
@@ -1141,7 +1326,7 @@ class WebServer:
 
     def __init__(self, engine, keys: dict, cfg: dict, host: str = "0.0.0.0", port: int = 8347,
                  config_path: str = "config.toml", playlog: PlayLog | None = None,
-                 safety: Safety | None = None):
+                 safety: Safety | None = None, radio=None):
         self.host = host
         self.port = port
         self._server = None
@@ -1154,6 +1339,7 @@ class WebServer:
         NutTxHandler.safety = safety or Safety(engine, cfg)
         NutTxHandler.config_path = config_path
         NutTxHandler.tts = TTSClient(cfg)
+        NutTxHandler.radio = radio
 
     def start(self) -> None:
         self._server = HTTPServer((self.host, self.port), NutTxHandler)

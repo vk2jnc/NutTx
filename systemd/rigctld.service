@@ -1,0 +1,16 @@
+[Unit]
+Description=rigctld - hamlib rig control daemon (for NutTx PTT)
+After=network.target
+
+[Service]
+# EDIT THESE TWO LINES for your radio:
+#   -m <model>  : rigctld -l to list models (e.g. 108 = Yaesu FT-991A)
+#   -d <device> : serial device (e.g. /dev/ttyUSB0) or network rig
+ExecStart=/usr/bin/rigctld -m 108 -d /dev/ttyUSB0 -r 4800
+# Allow the radio's USB serial device
+StandardInput=tty
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

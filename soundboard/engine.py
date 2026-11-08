@@ -37,6 +37,11 @@ class Engine:
         self._sounds: dict[str, Sound] = {}
         self._lock = threading.Lock()
         self._active: set[str] = set()
+        # Optional playback hooks (e.g. radio PTT keying):
+        #   pre_hook(name)  -- called just before audio starts
+        #   post_hook(name) -- called just after audio finishes
+        self.pre_hook = None
+        self.post_hook = None
 
         # Determine sample rate
         if sample_rate == 0:
@@ -106,18 +111,31 @@ class Engine:
         data = sound.data * (self.global_volume * sound.volume)
 
         if blocking:
+            self._hook("pre", name)
             sd.play(data, self.sample_rate, device=self.device)
             sd.wait()
+            self._hook("post", name)
             with self._lock:
                 self._active.discard(name)
         else:
             def _play_bg():
+                self._hook("pre", name)
                 sd.play(data, self.sample_rate, device=self.device)
                 sd.wait()
+                self._hook("post", name)
                 with self._lock:
                     self._active.discard(name)
             threading.Thread(target=_play_bg, daemon=True).start()
         return True
+
+    def _hook(self, phase: str, name: str) -> None:
+        """Call the pre/post playback hook (if set), never raising."""
+        hook = self.pre_hook if phase == "pre" else self.post_hook
+        if hook is not None:
+            try:
+                hook(name)
+            except Exception:
+                pass
 
     def play_file(self, filepath: str, blocking: bool = True) -> bool:
         """Play an arbitrary file (not necessarily in sounds dir)."""
@@ -126,9 +144,11 @@ class Engine:
         if sound is None:
             return False
         data = sound.data * self.global_volume
+        self._hook("pre", path.stem)
         sd.play(data, self.sample_rate, device=self.device)
         if blocking:
             sd.wait()
+        self._hook("post", path.stem)
         return True
 
     def play_clip(self, data: bytes, name: str = "tts", blocking: bool = False) -> bool:
@@ -153,12 +173,16 @@ class Engine:
             arr = np.column_stack([arr, arr])
         out = arr * self.global_volume
         if blocking:
+            self._hook("pre", name)
             sd.play(out, self.sample_rate, device=self.device)
             sd.wait()
+            self._hook("post", name)
         else:
             def _bg():
+                self._hook("pre", name)
                 sd.play(out, self.sample_rate, device=self.device)
                 sd.wait()
+                self._hook("post", name)
             threading.Thread(target=_bg, daemon=True).start()
         return True
 

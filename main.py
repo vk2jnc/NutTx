@@ -65,6 +65,11 @@ def main():
     parser.add_argument("--web-port", type=int, help="Override web UI port")
     parser.add_argument("--no-web", action="store_true", help="Disable web UI")
 
+    # Radio / PTT (rigctld - FLRig or hamlib)
+    parser.add_argument("--radio-host", help="Radio rigctld host (default from [radio] config)")
+    parser.add_argument("--radio-port", type=int, help="Radio rigctld port (default 4532)")
+    parser.add_argument("--no-radio", action="store_true", help="Disable radio PTT control")
+
     # Logging
     parser.add_argument("--log-file", help="Playback log file (JSON lines)")
 
@@ -233,6 +238,14 @@ def main():
 
     # --- Main modes ---
 
+    # Radio CLI overrides (applied before daemon/interactive setup)
+    if args.radio_host:
+        cfg.setdefault("radio", {})["host"] = args.radio_host
+    if args.radio_port:
+        cfg.setdefault("radio", {})["port"] = args.radio_port
+    if args.no_radio:
+        cfg.setdefault("radio", {})["enabled"] = False
+
     if args.daemon:
         from soundboard.daemon import run_daemon
         cfg["_config_path"] = args.config
@@ -246,6 +259,12 @@ def main():
     else:
         # Interactive TUI mode (optionally with external inputs)
         safety = Safety(engine, cfg)
+
+        # Radio / PTT (rigctld - FLRig or hamlib)
+        from soundboard.radio import setup_radio
+        rig = setup_radio(cfg, engine)
+        if cfg.get("radio", {}).get("enabled", False):
+            print(f"Radio: {rig.host}:{rig.port} (PTT on playback: {rig.ptt_on_play})")
 
         def trigger_key(ch: str, source: str = "keyboard"):
             safety.touch()
@@ -293,7 +312,7 @@ def main():
                             host=cfg.get("web", {}).get("host", "0.0.0.0"),
                             port=args.web_port or cfg.get("web", {}).get("port", 8347),
                             config_path=args.config,
-                            playlog=playlog, safety=safety)
+                            playlog=playlog, safety=safety, radio=rig)
             web.start()
             print(f"Web UI: http://localhost:{web.port}")
         else:
@@ -302,6 +321,7 @@ def main():
         tui = TUI(engine, keys, cfg, playlog=playlog, safety=safety)
         tui.run()
 
+        rig.stop()
         if serial_input:
             serial_input.stop()
         if udp_input:
