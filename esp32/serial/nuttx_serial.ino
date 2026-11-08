@@ -30,9 +30,9 @@
 // USB CDC is native on ESP32-S2/S3. For classic ESP32 use USB-Serial-JTAG or a UART bridge.
 // For ESP32-S3: USB CDC is built-in, no extra library needed.
 
-const int PINs[] = {2, 4, 5, 18, 19, 21, 22, 23, 25, 26, 32};
-const int NUM_BUTTONS = 11;
-const char SEND[] = "1234567890m";
+const int PINs[] = {2, 4, 5, 18, 19, 21, 22, 23, 25, 26, 32, 33};
+const int NUM_BUTTONS = 12;
+const char SEND[] = "1234567890mr";  // 1-0 sounds, m=mute, r=radio PTT toggle
 
 void setup() {
     // For ESP32-S3 with native USB CDC:

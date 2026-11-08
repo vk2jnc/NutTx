@@ -39,9 +39,9 @@ const char* TARGET_IP = "192.168.1.100";  // IP of PC running NutTx
 const int   TARGET_PORT = 5566;
 // ========================
 
-const int PINs[] = {2, 4, 5, 18, 19, 21, 22, 23, 25, 26, 32};
-const int NUM_BUTTONS = 11;
-const char SEND[] = "1234567890m";
+const int PINs[] = {2, 4, 5, 18, 19, 21, 22, 23, 25, 26, 32, 33};
+const int NUM_BUTTONS = 12;
+const char SEND[] = "1234567890mr";  // 1-0 sounds, m=mute, r=radio PTT toggle
 const int LED_PIN = 27;
 
 WiFiUDP udp;

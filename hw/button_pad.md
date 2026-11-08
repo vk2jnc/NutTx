@@ -2,7 +2,7 @@
 
 ## Design Spec
 
-A 2x5 grid (10 buttons) + 1 extra (mute) for a total of 11 buttons.
+A 2x5 grid (10 buttons) + 2 extras (mute, PTT) for a total of 12 buttons.
 
 ### Dimensions
 - Overall: 120mm x 60mm x 18mm (fits in a jacket pocket)
@@ -17,7 +17,7 @@ A 2x5 grid (10 buttons) + 1 extra (mute) for a total of 11 buttons.
 +------------------------------------------+
 |  [1]    [2]    [3]    [4]    [5]        |
 |  [6]    [7]    [8]    [9]    [0]        |
-|  [MUTE]                                    |
+|  [MUTE]  [PTT]                               |
 +------------------------------------------+
         USB-C port (right side)
         3.5mm jack (left side, optional)
@@ -34,7 +34,7 @@ A 2x5 grid (10 buttons) + 1 extra (mute) for a total of 11 buttons.
 - Optional 3.5mm jack hole on left (for wired fallback)
 - PCB standoff holes (M3) at 4 corners
 - Textured top surface (20% concentric) to prevent slipping
-- Optional: engraved labels for "1" through "0" and "M"
+- Optional: engraved labels for "1" through "0", "M" (mute) and "P" (PTT)
 
 ### ESP32 Fit
 - ESP32 DevKitC (38mm x 30mm) fits in a recessed pocket on the bottom
@@ -43,7 +43,7 @@ A 2x5 grid (10 buttons) + 1 extra (mute) for a total of 11 buttons.
 
 ### Recommended PCB
 For a cleaner build, use a small perfboard:
-- 11 tactile switches
+- 12 tactile switches
 - ESP32 (classic, ~38x30mm)
 - 10K resistors (if using external pull-downs)
 - USB-C connector (for ESP32-S3) or micro-USB (classic)
@@ -91,6 +91,9 @@ with bd.new_part() as part:
 
     # Mute button (bottom-left)
     body = body - bd.cylinder(BTN_R, H + 2, pos=(-40, MUTE_Y_OFFSET, 0))
+
+    # PTT button (bottom, right of mute)
+    body = body - bd.cylinder(BTN_R, H + 2, pos=(-20, MUTE_Y_OFFSET, 0))
 
     # USB-C port cutout (right edge)
     usb_w, usb_h, usb_d = 14, 5, 8

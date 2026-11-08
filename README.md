@@ -103,6 +103,7 @@ port = 4532
 ptt_on_play = true
 ptt_pre_ms = 50
 ptt_post_ms = 150
+ptt_trigger_sound = ""
 
 [midi]
 enabled = false
@@ -352,7 +353,17 @@ adjustable in the panel). Overlapping sounds hold PTT until the last one
 finishes; a muted NutTx never keys. The panel also shows live PTT state,
 frequency and mode, and has a manual **PTT** button for testing the link.
 
+**The radio as an input:** pick a sound in *When radio keyed* and NutTx
+plays it whenever you key the mic (rising PTT edge) — e.g. a key-click or
+your call sign. NutTx never releases PTT you're holding yourself.
+
+**Frequency & mode:** type a frequency (MHz, e.g. `145.500` or `7.0740`)
+and pick a mode, hit **Set** — the panel tracks the rig's live frequency
+and mode.
+
 CLI overrides: `--radio-host`, `--radio-port`, `--no-radio`.
+TUI: `r` toggles manual PTT, header shows `PTT: TX/RX` + frequency.
+ESP32 serial/WiFi pads: 12th button (GPIO 33) sends `r` (PTT toggle).
 
 ## Using for Streaming (OBS)
 

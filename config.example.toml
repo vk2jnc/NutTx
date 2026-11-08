@@ -81,6 +81,8 @@ ptt_on_play = true
 ptt_pre_ms = 50
 # Release PTT this many ms AFTER audio ends
 ptt_post_ms = 150
+# Play this sound when the radio is keyed externally ("" = off)
+ptt_trigger_sound = ""
 
 # MIDI input
 [midi]

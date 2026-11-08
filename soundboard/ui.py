@@ -13,12 +13,13 @@ class TUI:
     """
 
     def __init__(self, engine: Engine, keys: dict, cfg: dict,
-                 playlog=None, safety: Safety | None = None):
+                 playlog=None, safety: Safety | None = None, radio=None):
         self.engine = engine
         self.keys = keys
         self.cfg = cfg
         self.playlog = playlog
         self.safety = safety or Safety(engine, cfg)
+        self.radio = radio  # RigClient (optional)
         self._running = False
 
     def run(self) -> None:
@@ -54,6 +55,9 @@ class TUI:
                 self.safety.duck()
             elif c == "u":
                 self.safety.unduck()
+            elif c == "r":
+                if self.radio is not None:
+                    self.radio.ptt_toggle()
             elif c in self.keys:
                 sound_name = self.keys[c]
                 ok = self.engine.play(sound_name)
@@ -74,6 +78,13 @@ class TUI:
             except Exception:
                 pass
         header = f"{title}  |  {self.engine.sample_rate} Hz  |  {device_name}"
+        if self.radio is not None:
+            st = self.radio.status()
+            if st["enabled"]:
+                ptt = "TX" if (st["ptt"] or st["manual_ptt"]) else "RX"
+                header += f"  |  PTT: {ptt}"
+                if st["freq"]:
+                    header += f"  {st['freq']}"
         stdscr.addstr(0, 0, header[:w - 1], curses.A_BOLD | curses.color_pair(1) if curses.has_colors() else curses.A_BOLD)
 
         # Volume bar
@@ -102,7 +113,10 @@ class TUI:
             y += 1
 
         # Footer / help
-        footer = " [1-0] play  [m] mute  [d] duck  [u] unduck  [l] reload  [q] quit"
+        footer = " [1-0] play  [m] mute  [d] duck  [u] unduck  [l] reload"
+        if self.radio is not None:
+            footer += "  [r] ptt"
+        footer += "  [q] quit"
         try:
             stdscr.addstr(h - 1, 0, footer[:w - 1], curses.A_DIM)
         except curses.error:

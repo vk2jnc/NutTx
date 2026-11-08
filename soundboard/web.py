@@ -201,7 +201,8 @@ class NutTxHandler(BaseHTTPRequestHandler):
             if self.radio is None:
                 self._json(400, {"error": "radio not available"})
                 return
-            keys_in = ("host", "port", "enabled", "ptt_on_play", "ptt_pre_ms", "ptt_post_ms")
+            keys_in = ("host", "port", "enabled", "ptt_on_play", "ptt_pre_ms",
+                       "ptt_post_ms", "ptt_trigger_sound")
             self.radio.reconfigure(**{k: data[k] for k in keys_in if k in data})
             self._save_radio()
             self._json(200, self.radio.status())
@@ -211,6 +212,31 @@ class NutTxHandler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "radio not available"})
                 return
             self._json(200, self.radio.test())
+
+        elif path == "/api/radio/freq":
+            data = json.loads(body) if body else {}
+            if self.radio is None:
+                self._json(400, {"error": "radio not available"})
+                return
+            from soundboard.radio import parse_freq
+            hz = parse_freq(data.get("freq", ""))
+            if hz is None:
+                self._json(400, {"error": "bad frequency (use MHz e.g. 145.500 or Hz)"})
+                return
+            ok = self.radio.set_freq(hz)
+            self._json(200 if ok else 502, {"ok": ok, **self.radio.status()})
+
+        elif path == "/api/radio/mode":
+            data = json.loads(body) if body else {}
+            if self.radio is None:
+                self._json(400, {"error": "radio not available"})
+                return
+            mode = str(data.get("mode", "")).upper()
+            if mode not in ("FM", "USB", "LSB", "CW", "AM", "DATA"):
+                self._json(400, {"error": "bad mode (FM/USB/LSB/CW/AM/DATA)"})
+                return
+            ok = self.radio.set_mode(mode)
+            self._json(200 if ok else 502, {"ok": ok, **self.radio.status()})
 
         elif path == "/api/radio/ptt":
             data = json.loads(body) if body else {}
@@ -269,6 +295,7 @@ class NutTxHandler(BaseHTTPRequestHandler):
             f'ptt_on_play = {str(r.ptt_on_play).lower()}',
             f'ptt_pre_ms = {r.ptt_pre_ms}',
             f'ptt_post_ms = {r.ptt_post_ms}',
+            f'ptt_trigger_sound = "{r.ptt_trigger_sound}"',
         ]
         try:
             content = Path(config_path).read_text()
@@ -973,6 +1000,8 @@ h1 {{
       }}
       .radio-ptt-btn.keyed {{ background: var(--red); color: #fff; box-shadow: 0 0 14px var(--red); }}
       .radio-detail {{ margin-top: 8px; font-size: 0.75rem; color: var(--text-dim); }}
+      .radio-select {{ max-width: 170px; }}
+      .radio-freq {{ width: 120px; }}
       #radioStatus.tx {{ color: var(--red); font-weight: 700; }}
     </style>
     <div class="panel" id="ttsPanel">
@@ -1011,6 +1040,21 @@ h1 {{
             <label class="radio-label">Pre <input type="number" id="radioPreMs" class="tts-input radio-ms" value="50" onchange="radioSave()"> ms</label>
             <label class="radio-label">Post <input type="number" id="radioPostMs" class="tts-input radio-ms" value="150" onchange="radioSave()"> ms</label>
             <button class="radio-ptt-btn" id="radioPttBtn" onclick="radioPtt()">PTT</button>
+        </div>
+        <div class="radio-row">
+            <label class="radio-label">When radio keyed:
+                <select id="radioTriggerSound" class="device-select radio-select" onchange="radioSave()">
+                    <option value="">(none)</option>
+                </select>
+            </label>
+        </div>
+        <div class="radio-row">
+            <input type="text" id="radioFreq" class="tts-input radio-freq" placeholder="145.500 MHz">
+            <select id="radioMode" class="device-select radio-select">
+                <option>FM</option><option>USB</option><option>LSB</option>
+                <option>CW</option><option>AM</option><option>DATA</option>
+            </select>
+            <button class="btn tts-btn" onclick="radioSetFreqMode()">Set</button>
         </div>
         <div class="radio-detail" id="radioDetail">not connected</div>
         <div class="tts-msg" id="radioMsg"></div>
@@ -1210,6 +1254,15 @@ function radioRender(d) {{
   if(d.mode) s += ' \u00b7 ' + d.mode;
   if(d.ptt_refs > 0) s += ' \u00b7 PTT held by playback';
   detail.textContent = s;
+  // sync freq/mode inputs (don't clobber while user is editing)
+  const freqEl = document.getElementById('radioFreq');
+  if(d.freq_hz && document.activeElement !== freqEl) {{
+    freqEl.value = (parseFloat(d.freq_hz) / 1e6).toFixed(3);
+  }}
+  const modeEl = document.getElementById('radioMode');
+  if(d.mode && d.mode !== 'None' && [...modeEl.options].some(o=>o.value===d.mode)) {{
+    modeEl.value = d.mode;
+  }}
 }}
 function radioInit() {{
   fetch('/api/radio').then(r=>r.json()).then(d=>{{
@@ -1220,6 +1273,18 @@ function radioInit() {{
     document.getElementById('radioPreMs').value = (d.ptt_pre_ms != null) ? d.ptt_pre_ms : 50;
     document.getElementById('radioPostMs').value = (d.ptt_post_ms != null) ? d.ptt_post_ms : 150;
     radioRender(d);
+  }}).catch(()=>{{}});
+  // populate "when radio keyed" sound picker
+  fetch('/api/sounds').then(r=>r.json()).then(d=>{{
+    const sel = document.getElementById('radioTriggerSound');
+    d.sounds.forEach(s => {{
+      const opt = document.createElement('option');
+      opt.value = s; opt.textContent = s;
+      sel.appendChild(opt);
+    }});
+    fetch('/api/radio').then(r=>r.json()).then(rd=>{{
+      if(rd.ptt_trigger_sound) sel.value = rd.ptt_trigger_sound;
+    }});
   }}).catch(()=>{{}});
 }}
 function radioPoll() {{
@@ -1233,12 +1298,36 @@ function radioSave() {{
     ptt_on_play: document.getElementById('radioPttOnPlay').checked,
     ptt_pre_ms: parseInt(document.getElementById('radioPreMs').value) || 0,
     ptt_post_ms: parseInt(document.getElementById('radioPostMs').value) || 0,
+    ptt_trigger_sound: document.getElementById('radioTriggerSound').value,
   }};
   fetch('/api/radio', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body: JSON.stringify(payload)}})
   .then(r=>r.json()).then(radioRender).catch(e=>{{
     const msg = document.getElementById('radioMsg');
     msg.className = 'tts-msg err'; msg.textContent = 'save failed: ' + e;
   }});
+}}
+function radioSetFreqMode() {{
+  const msg = document.getElementById('radioMsg');
+  const freq = document.getElementById('radioFreq').value.trim();
+  const mode = document.getElementById('radioMode').value;
+  msg.className = 'tts-msg'; msg.textContent = 'Setting...';
+  let done = 0, failed = '';
+  const finish = () => {{
+    if(--done > 0) return;
+    if(failed) {{ msg.className = 'tts-msg err'; msg.textContent = failed; }}
+    else {{ msg.textContent = 'Set: ' + freq + ' MHz ' + mode; }}
+    radioPoll();
+  }};
+  if(freq) {{
+    done++;
+    fetch('/api/radio/freq', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body: JSON.stringify({{freq}})}})
+    .then(r=>r.json()).then(d=>{{ if(!d.ok) failed = d.error || 'freq failed'; }})
+    .catch(e=>{{ failed = 'freq: ' + e; }}).finally(finish);
+  }}
+  done++;
+  fetch('/api/radio/mode', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body: JSON.stringify({{mode}})}})
+  .then(r=>r.json()).then(d=>{{ if(!d.ok) failed = d.error || 'mode failed'; }})
+  .catch(e=>{{ failed = 'mode: ' + e; }}).finally(finish);
 }}
 function radioTest() {{
   const msg = document.getElementById('radioMsg');

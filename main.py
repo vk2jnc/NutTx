@@ -318,7 +318,7 @@ def main():
         else:
             web = None
 
-        tui = TUI(engine, keys, cfg, playlog=playlog, safety=safety)
+        tui = TUI(engine, keys, cfg, playlog=playlog, safety=safety, radio=rig)
         tui.run()
 
         rig.stop()

@@ -27,6 +27,9 @@ def make_pad() -> None:
         # Mute button (bottom-left)
         body = body - bd.cylinder(BTN_R, H + 2, pos=(-40, MUTE_Y_OFFSET, 0))
 
+        # PTT button (bottom, right of mute)
+        body = body - bd.cylinder(BTN_R, H + 2, pos=(-20, MUTE_Y_OFFSET, 0))
+
         # USB-C port cutout (right edge)
         usb_w, usb_h, usb_d = 14, 5, 8
         body = body - bd.box(usb_w, usb_h, usb_d, pos=(W/2 - 2, 0, H/4))
